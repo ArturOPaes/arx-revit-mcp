@@ -1,3 +1,17 @@
+# NÃO é teste de pytest — é diagnóstico manual, e exige Revit rodando.
+#
+# Renomeado de `test_*.py` para `check_*.py` em 27/08/2026: o corpo deste
+# arquivo chama `asyncio.run(main())` no NÍVEL DE MÓDULO, então ele executava
+# na COLETA do pytest e derrubava a suíte inteira antes de qualquer teste rodar:
+#
+#     AssertionError: expected model data missing
+#     Interrupted: 1 error during collection
+#
+# Com o nome antigo, `pytest tests/` era impossível — inclusive num CI. O erro
+# não era dos testes, e era neles que se procurava.
+#
+# Rode à mão: python tests/check_init_latency.py
+
 # Measures time from spawn to MCP initialize response over stdio.
 import asyncio, time, sys, os
 from mcp import ClientSession, StdioServerParameters
