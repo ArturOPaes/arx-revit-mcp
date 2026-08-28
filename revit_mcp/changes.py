@@ -49,6 +49,8 @@ No Revit imports here on purpose: this is the half that can be tested on any
 machine.
 """
 
+import logging
+
 # The one word the server accepts for "the bridge read this from the model".
 # Keep in sync with `conformidade.MedidaPelaPonte` on the server; a typo here
 # is silently downgraded to "unknown" there, which is the safe side but hides
@@ -190,3 +192,35 @@ def empty_report():
     and "did not say" is what this whole file removes.
     """
     return ChangeReport().to_dict()
+
+
+def registrar_no_trabalho(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: ``job_routes`` importa ``pyrevit``, e um import
+    no topo criaria um ciclo com os módulos que ele registra — além de tornar
+    este arquivo inimportável fora do Revit, que é o oposto do que ele é.
+
+    ## A falha é REGISTRADA, nunca engolida
+
+    A primeira versão disto tinha ``except Exception: pass``. Se a entrega
+    falhasse — import quebrado, ciclo, qualquer coisa — o ensaio somaria zero e
+    o plano de aprovação voltaria VAZIO, dizendo "nada mudaria" enquanto cinco
+    paredes mudariam. Silêncio virando aprovação, no lugar exato em que isso
+    custa mais caro.
+
+    A rota continua respondendo: o relatório dela vale mesmo que a soma do
+    trabalho tenha se perdido. Mas a perda aparece no log.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception as e:
+        logging.getLogger(__name__).warning(
+            "o passo %s não entrou na soma do trabalho (%s) — se este job for um "
+            "ensaio, o plano sai incompleto",
+            rota,
+            e,
+        )
+    return relatorio

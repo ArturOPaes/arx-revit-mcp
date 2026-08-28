@@ -45,7 +45,7 @@ class TestOsIdentificadores:
         r = ChangeReport().created(101, "102", [103, 104]).to_dict()
         assert r["created"] == ["101", "102", "103", "104"]
 
-    def test_o_mesmo_elemento_duas_vezes_conta_UMA(self):
+    def test_o_mesmo_elemento_duas_vezes_conta_uma(self):
         # Uma rota que toca a mesma parede duas vezes mudou uma parede. Contar
         # duas infla o que o arquiteto está sendo convidado a aprovar.
         r = ChangeReport().modified(7, 7, "7").to_dict()
@@ -67,14 +67,14 @@ class TestOsIdentificadores:
 
 
 class TestAProcedencia:
-    def test_toda_medicao_sai_marcada_como_MEDIDA_pela_ponte(self):
+    def test_toda_medicao_sai_marcada_como_medida_pela_ponte(self):
         # É a razão de existir deste módulo: o servidor precisa distinguir um
         # número lido do modelo de um número que o agente declarou.
         r = ChangeReport().room("r1", "dormitorio", {"area_piso_m2": 12.5}).to_dict()
         medicao = r["measurements"]["ambientes"][0]["medicoes"]["area_piso_m2"]
         assert medicao["procedencia"] == MEDIDA_PELA_PONTE
 
-    def test_quem_chama_NAO_consegue_dizer_que_o_numero_e_de_outra_origem(self):
+    def test_quem_chama_nao_consegue_dizer_que_o_numero_e_de_outra_origem(self):
         # Deixar a procedência ser passada de fora abriria a única mentira que
         # este módulo não pode contar: número declarado se passando por medido.
         r = ChangeReport().room(
@@ -176,3 +176,57 @@ class TestUnidades:
         # A regra de iluminação divide abertura por piso; arredondar os dois
         # a duas casas antes de dividir move a fração.
         assert sq_ft_to_m2(100, casas=4) == 9.2903
+
+
+class TestAEntregaAoTrabalho:
+    """A soma do ensaio não pode se perder em silêncio.
+
+    A primeira versão de `registrar_no_trabalho` tinha `except Exception:
+    pass`. Se a entrega falhasse — import quebrado, ciclo, qualquer coisa — o
+    ensaio somaria zero e o plano de aprovação voltaria VAZIO, dizendo "nada
+    mudaria" enquanto cinco paredes mudariam.
+
+    Silêncio virando aprovação, no lugar exato em que isso custa mais caro: a
+    tela onde o arquiteto diz sim.
+    """
+
+    def test_o_relatorio_atravessa_mesmo_quando_a_entrega_falha(self, monkeypatch, caplog):
+        from revit_mcp import changes
+
+        # `job_routes` importa pyrevit: fora do Revit, este import SEMPRE
+        # falha. É o caso real nesta máquina, e é o que o teste exercita.
+        relatorio = {"created": ["1"], "modified": [], "deleted": [], "measurements": {}}
+        devolvido = changes.registrar_no_trabalho(relatorio, "/create_walls/")
+        assert devolvido is relatorio, "a rota perdeu o próprio relatório por causa da soma"
+
+    def test_a_falha_da_entrega_e_registrada(self, caplog):
+        import logging as _logging
+
+        from revit_mcp import changes
+
+        with caplog.at_level(_logging.WARNING):
+            changes.registrar_no_trabalho({}, "/create_walls/")
+
+        assert caplog.records, "a entrega falhou e ninguém ficou sabendo"
+        texto = caplog.text
+        assert "/create_walls/" in texto, f"o log não diz qual passo se perdeu: {texto}"
+        assert "ensaio" in texto, f"o log não diz a consequência: {texto}"
+
+    def test_quando_a_entrega_funciona_nada_e_registrado(self, monkeypatch, caplog):
+        import logging as _logging
+        import sys
+        import types
+
+        from revit_mcp import changes
+
+        # Um `job_routes` de mentira, para o caminho feliz existir sem Revit.
+        recebidos = []
+        falso = types.ModuleType("revit_mcp.job_routes")
+        falso.record_change = lambda r, route=None: recebidos.append((r, route))
+        monkeypatch.setitem(sys.modules, "revit_mcp.job_routes", falso)
+
+        with caplog.at_level(_logging.WARNING):
+            changes.registrar_no_trabalho({"created": ["7"]}, "/create_walls/")
+
+        assert recebidos == [({"created": ["7"]}, "/create_walls/")]
+        assert not caplog.records, "avisou de uma falha que não houve"

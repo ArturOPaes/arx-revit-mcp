@@ -33,7 +33,6 @@ import logging
 
 from .job_group import (
     ASSIMILATE,
-    NOTHING,
     OPEN,
     ROLLBACK,
     ROLLBACK_THEN_OPEN,
@@ -137,8 +136,9 @@ def register_job_routes(api):
         )
 
     # NOTHING is the fourth outcome and it is deliberate: a refusal changes no
-    # group. It leaves with 409 so the agent can tell "I did nothing because
-    # you asked for the wrong job" from "done".
-    assert NOTHING  # keeps the import honest about the four outcomes
+    # group, and leaves with 409 so the agent can tell "I did nothing because
+    # you asked for the wrong job" from "done". It is not imported here because
+    # nothing in this file compares against it — the handlers act on the three
+    # outcomes that DO something.
 
     logger.info("Job group routes registered successfully")
