@@ -5,6 +5,7 @@
 def register_tools(mcp_server, revit_get_func, revit_post_func, revit_image_func):
     """Register all tools with the MCP server"""
     # Import all tool modules
+    from .job_tools import register_job_tools
     from .status_tools import register_status_tools
     from .view_tools import register_view_tools
     from .family_tools import register_family_tools
@@ -29,6 +30,7 @@ def register_tools(mcp_server, revit_get_func, revit_post_func, revit_image_func
     from .document_tools import register_document_tools
 
     # Register tools from each module
+    register_job_tools(mcp_server, revit_get_func, revit_post_func)
     register_status_tools(mcp_server, revit_get_func)
     register_view_tools(mcp_server, revit_get_func, revit_post_func, revit_image_func)
     register_family_tools(mcp_server, revit_get_func, revit_post_func)
