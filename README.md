@@ -281,3 +281,62 @@ Contributions are welcome! Feel free to submit pull requests or open issues.
 ## License
 
 MIT
+
+## The write report (`changes`) — contract
+
+Every route that changes the model returns a `changes` object, and the MCP
+relays it untouched. It is what the ARCHITECTUS approval gate decides on, and
+what the conformity check reads before quoting a standard back at the
+architect — so the shape is fixed, and it is fixed on the server side
+(`cli/src/cad_env.rs`, `conformidade.Ambiente`).
+
+```json
+{
+  "created":  ["<element id>"],
+  "modified": ["<element id>"],
+  "deleted":  ["<element id>"],
+  "measurements": {
+    "ambientes": [
+      {
+        "id": "sala-01",
+        "nome": "Suíte",
+        "uso": "dormitorio",
+        "medicoes": {
+          "area_piso_m2": {"valor": 12.5, "procedencia": "medida_pela_ponte"},
+          "iluminacao":   {"valor": 1.5, "base": 12.5, "bruta": "1.5 m² / 12.5 m²",
+                           "procedencia": "medida_pela_ponte"}
+        }
+      }
+    ]
+  }
+}
+```
+
+Build it with `revit_mcp.changes.ChangeReport`, never by hand:
+
+```python
+from revit_mcp.changes import ChangeReport
+
+report = ChangeReport()
+report.created(new_ids).modified(changed_ids)
+report.room(room.Id, "dormitorio", {"area_piso_m2": area}, nome=room.Name)
+return routes.make_response(data={"success": True, "changes": report.to_dict()})
+```
+
+Three rules that are not obvious, and that the tests hold:
+
+- **The four top-level keys are always present**, empty when nothing changed.
+  A missing key reads as "the route forgot"; an empty list says "I changed
+  nothing". The gate treats those differently.
+- **`procedencia` is stamped by this module and cannot be set by the caller.**
+  `medida_pela_ponte` means the number was read from the model through the
+  Revit API. The server's other value, `declarada_pelo_agente`, is what a
+  number written by the agent in the workdir gets — and the whole point of
+  this contract is that the two must never be confusable. A route that returns
+  a number it did not measure must not put it here.
+- **`measurements.ambientes` is omitted when the route measures no rooms.** An
+  empty list would read as "I looked and found none", which the conformity
+  check records as a gap.
+
+What none of this proves: that Revit accepted the operation. The suite runs
+without Revit; the report is only as true as the API call that produced it.
