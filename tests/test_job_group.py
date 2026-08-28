@@ -43,7 +43,7 @@ class TestComecar:
         assert d.action == OPEN and d.ok
         assert grupos.open_job == "job-1"
 
-    def test_comecar_o_MESMO_trabalho_de_novo_nao_descarta_nada(self, grupos):
+    def test_comecar_o_mesmo_trabalho_de_novo_nao_descarta_nada(self, grupos):
         # Um "começar" repetido não é trabalho novo: é a resposta anterior que
         # se perdeu no caminho. Descartar aqui jogaria fora o que o agente já
         # tinha feito.
@@ -52,7 +52,7 @@ class TestComecar:
         assert d.action == NOTHING and d.ok
         assert grupos.open_job == "job-1"
 
-    def test_um_trabalho_NOVO_descarta_o_que_ficou_aberto(self, grupos):
+    def test_um_trabalho_novo_descarta_o_que_ficou_aberto(self, grupos):
         # É a regra que o Artur escolheu: a próxima chamada decide. O grupo
         # abandonado some quando alguém volta a trabalhar, e não por um relógio.
         grupos.begin("job-1")
@@ -61,7 +61,7 @@ class TestComecar:
         assert d.discarded_job == "job-1"
         assert grupos.open_job == "job-2"
 
-    def test_o_descarte_e_DITO_e_nao_acontece_calado(self, grupos):
+    def test_o_descarte_e_dito_e_nao_acontece_calado(self, grupos):
         # Alguém vai procurar por que o modelo voltou atrás. Sem esta frase, a
         # resposta é "não sei".
         grupos.begin("job-1")
@@ -69,7 +69,7 @@ class TestComecar:
         assert "job-1" in d.message and "discard" in d.message
 
     @pytest.mark.parametrize("vazio", [None, "", "   "])
-    def test_trabalho_sem_nome_e_RECUSADO(self, grupos, vazio):
+    def test_trabalho_sem_nome_e_recusado(self, grupos, vazio):
         # Um grupo sem nome não pode ser fechado por nome depois — só por
         # acidente.
         d = grupos.begin(vazio)
@@ -90,7 +90,7 @@ class TestFechar:
         assert d.action == ROLLBACK and d.ok
         assert grupos.open_job is None
 
-    def test_confirmar_sem_nada_aberto_NAO_e_sucesso_silencioso(self, grupos):
+    def test_confirmar_sem_nada_aberto_nao_e_sucesso_silencioso(self, grupos):
         # O gate leria "confirmado" e acreditaria que um grupo envolveu o
         # trabalho, quando nada envolveu.
         d = grupos.commit("job-1")
@@ -165,7 +165,7 @@ class TestAFormaDaResposta:
         assert d["action"] == OPEN and d["ok"] is True
         assert "job-1" in d["message"]
 
-    def test_o_trabalho_descartado_aparece_por_NOME_na_resposta(self, grupos):
+    def test_o_trabalho_descartado_aparece_por_nome_na_resposta(self, grupos):
         # Não basta dizer "descartei um grupo": qual, é o que a pessoa precisa
         # saber para procurar o que se perdeu.
         grupos.begin("job-1")
@@ -215,7 +215,7 @@ class TestOEnsaio:
         assert "rehearsal" in grupos.begin("job-1", dry_run=True).message
         assert grupos.dry_run is True
 
-    def test_trabalho_de_VERDADE_comecado_por_cima_de_um_ensaio_nao_herda_o_ensaio(self, grupos):
+    def test_trabalho_de_verdade_comecado_por_cima_de_um_ensaio_nao_herda_o_ensaio(self, grupos):
         # Este é o caso que perde trabalho de gente: o ensaio ficou aberto, um
         # job de verdade começa por cima, e se herdasse o modo tudo o que ele
         # fizesse seria desfeito no fim — o arquiteto aprovaria e nada teria
@@ -244,7 +244,7 @@ class TestOQueOEnsaioRELATA:
         assert r["created"] == ["1", "2"]
         assert r["modified"] == ["9"]
 
-    def test_o_mesmo_elemento_em_duas_chamadas_conta_UMA(self, grupos):
+    def test_o_mesmo_elemento_em_duas_chamadas_conta_uma(self, grupos):
         # O agente que cria e depois modifica a mesma parede mexeu numa
         # parede; um plano dizendo "2" pede aprovação sobre estrago maior do
         # que o real.
@@ -268,7 +268,7 @@ class TestOQueOEnsaioRELATA:
             )
         assert len(grupos.rehearsal()["measurements"]["ambientes"]) == 2
 
-    def test_o_acumulado_e_por_TRABALHO_e_nao_vaza_para_o_seguinte(self, grupos):
+    def test_o_acumulado_e_por_trabalho_e_nao_vaza_para_o_seguinte(self, grupos):
         # Vazar faria o plano de aprovação de um job mostrar o que outro teria
         # mudado — e alguém aprovaria uma coisa lendo outra.
         grupos.begin("job-1", dry_run=True)
@@ -285,7 +285,7 @@ class TestOQueOEnsaioNAODesfaz:
     a mentira calada que este módulo existe para não contar.
     """
 
-    def test_exportar_e_avisado_pelo_NOME_do_efeito(self, grupos):
+    def test_exportar_e_avisado_pelo_nome_do_efeito(self, grupos):
         grupos.begin("job-1", dry_run=True)
         grupos.record({"created": [], "modified": [], "deleted": [], "measurements": {}},
                       route="/export_sheets_pdf/")
@@ -309,3 +309,56 @@ class TestOQueOEnsaioNAODesfaz:
         grupos.record({}, route="/export_pdf/")
         grupos.record({}, route="/reload_link/")
         assert len(grupos.rehearsal()["not_undone"]) == 2
+
+
+class TestOMesmoAmbienteMedidoDuasVezes:
+    """A conferência de norma lê estas medições e reprova projeto com elas.
+
+    Uma sala medida em duas chamadas do mesmo trabalho chegava duplicada: a
+    régua a confere duas vezes e a conta duas vezes no placar. Uma sala
+    reprovada viraria DUAS reprovações num relatório que cita artigo e trecho.
+    """
+
+    def medicao(self, ident, area):
+        return {
+            "created": [],
+            "modified": [],
+            "deleted": [],
+            "measurements": {
+                "ambientes": [
+                    {"id": ident, "uso": "dormitorio", "medicoes": {"area_piso_m2": {"valor": area}}}
+                ]
+            },
+        }
+
+    def test_conta_uma_vez_so(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record(self.medicao("sala-01", 12.0))
+        grupos.record(self.medicao("sala-01", 12.0))
+        assert len(grupos.rehearsal()["measurements"]["ambientes"]) == 1
+
+    def test_a_medicao_mais_nova_vence(self, grupos):
+        # A segunda leitura aconteceu depois da mudança, e é ela que descreve o
+        # ambiente como ele ficou. Ficar com a primeira faria o relatório
+        # conferir a lei contra um estado que o próprio trabalho já desfez.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record(self.medicao("sala-01", 12.0))
+        grupos.record(self.medicao("sala-01", 9.5))
+        ambientes = grupos.rehearsal()["measurements"]["ambientes"]
+        assert ambientes[0]["medicoes"]["area_piso_m2"]["valor"] == 9.5
+
+    def test_ambientes_diferentes_continuam_os_dois(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record(self.medicao("sala-01", 12.0))
+        grupos.record(self.medicao("sala-02", 8.0))
+        assert len(grupos.rehearsal()["measurements"]["ambientes"]) == 2
+
+    def test_a_ordem_e_a_da_primeira_vez_que_o_trabalho_tocou_o_ambiente(self, grupos):
+        # A lista se lê na ordem em que o trabalho tocou os ambientes, não na
+        # ordem em que os remediu.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record(self.medicao("sala-01", 12.0))
+        grupos.record(self.medicao("sala-02", 8.0))
+        grupos.record(self.medicao("sala-01", 9.5))
+        ids = [a["id"] for a in grupos.rehearsal()["measurements"]["ambientes"]]
+        assert ids == ["sala-01", "sala-02"]

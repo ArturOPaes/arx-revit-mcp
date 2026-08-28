@@ -244,6 +244,35 @@ def _merge(reports):
                 if item not in somado[chave]:
                     somado[chave].append(item)
         ambientes.extend((r.get("measurements") or {}).get("ambientes") or [])
+    ambientes = _um_por_ambiente(ambientes)
     if ambientes:
         somado["measurements"]["ambientes"] = ambientes
     return somado
+
+
+def _um_por_ambiente(ambientes):
+    """O mesmo ambiente medido duas vezes conta UMA, com a medição mais nova.
+
+    Sem isto, uma sala medida em duas chamadas do mesmo trabalho chegava
+    duplicada à conferência de norma — que a confere duas vezes e a conta duas
+    vezes no placar. Uma sala reprovada viraria duas reprovações num relatório
+    que cita artigo e trecho.
+
+    E a mais NOVA vence, não a primeira: a segunda leitura é a que aconteceu
+    depois da mudança, e é ela que descreve o ambiente como ele ficou. Ficar
+    com a primeira faria o relatório conferir a lei contra um estado que o
+    próprio trabalho já desfez.
+
+    A ordem de primeira aparição é preservada — a lista se lê na ordem em que
+    o trabalho tocou os ambientes, não na ordem em que os remediu.
+    """
+    posicao = {}
+    saida = []
+    for a in ambientes:
+        chave = a.get("id")
+        if chave in posicao:
+            saida[posicao[chave]] = a
+        else:
+            posicao[chave] = len(saida)
+            saida.append(a)
+    return saida
