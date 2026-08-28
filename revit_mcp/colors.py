@@ -11,6 +11,7 @@ import logging
 import random
 from collections import defaultdict
 from .utils import normalize_string
+from .color_math import distinct_rgb, gradient_rgb, hex_to_rgb as _hex_to_rgb, interpolate_rgb, safe_float
 
 logger = logging.getLogger(__name__)
 
@@ -19,114 +20,21 @@ def generate_distinct_colors(count):
     """
     Generate visually distinct colors using predefined RGB values
 
-    Args:
-        count (int): Number of distinct colors needed
-
-    Returns:
-        list: List of DB.Color objects with distinct colors
+    The arithmetic lives in ``color_math`` — no Revit needed to decide which
+    numbers these are, and that is the half the test suite can reach. All that
+    is left here is what genuinely needs the Revit API: the DB.Color wrapper.
     """
-    if count == 0:
-        return []
-
-    # Predefined RGB colors that are visually distinct
-    base_colors = [
-        (255, 0, 0),  # Red
-        (0, 255, 0),  # Green
-        (0, 0, 255),  # Blue
-        (255, 255, 0),  # Yellow
-        (255, 0, 255),  # Magenta
-        (0, 255, 255),  # Cyan
-        (255, 128, 0),  # Orange
-        (128, 0, 255),  # Purple
-        (255, 128, 128),  # Pink
-        (128, 255, 128),  # Light Green
-        (128, 128, 255),  # Light Blue
-        (255, 255, 128),  # Light Yellow
-        (128, 0, 0),  # Dark Red
-        (0, 128, 0),  # Dark Green
-        (0, 0, 128),  # Dark Blue
-        (128, 128, 0),  # Olive
-        (128, 0, 128),  # Dark Magenta
-        (0, 128, 128),  # Teal
-        (192, 192, 192),  # Silver
-        (128, 128, 128),  # Gray
-        (255, 192, 203),  # Light Pink
-        (255, 165, 0),  # Orange Red
-        (255, 20, 147),  # Deep Pink
-        (50, 205, 50),  # Lime Green
-        (30, 144, 255),  # Dodger Blue
-    ]
-
-    colors = []
-    for i in range(count):
-        if i < len(base_colors):
-            # Use predefined colors
-            r, g, b = base_colors[i]
-        else:
-            # Generate additional colors by cycling and modifying
-            base_idx = i % len(base_colors)
-            cycle = i // len(base_colors)
-            r, g, b = base_colors[base_idx]
-
-            # Modify brightness to create variations
-            factor = 1.0 - (cycle * 0.15)  # Reduce brightness by 15% each cycle
-            factor = max(0.3, factor)  # Don't go too dark
-
-            r = int(r * factor)
-            g = int(g * factor)
-            b = int(b * factor)
-
-        color = DB.Color(r, g, b)
-        colors.append(color)
-
-    return colors
+    return [DB.Color(r, g, b) for r, g, b in distinct_rgb(count)]
 
 
 def generate_gradient_colors(count):
-    """
-    Generate gradient colors from blue to red with better distribution
-    Args:
-        count (int): Number of gradient colors needed
-    Returns:
-        list: List of DB.Color objects representing the gradient
-    """
-    if count <= 1:
-        return [DB.Color(255, 0, 0)]
-
-    colors = []
-    for i in range(count):
-        # Create more distinct gradient from blue to red
-        ratio = float(i) / (count - 1)
-
-        # Use HSV color space for better distribution
-        red = int(255 * ratio)
-        green = int(255 * (1 - abs(2 * ratio - 1)))  # Peak at middle
-        blue = int(255 * (1 - ratio))
-
-        colors.append(DB.Color(red, green, blue))
-
-    return colors
+    """Gradient colors from blue to red. Arithmetic in ``color_math``."""
+    return [DB.Color(r, g, b) for r, g, b in gradient_rgb(count)]
 
 
 def interpolate_color(position):
-    """
-    Interpolate color based on position (0.0 to 1.0) for smooth gradients
-
-    Args:
-        position (float): Position in gradient (0.0 to 1.0)
-
-    Returns:
-        DB.Color: Interpolated color
-    """
-    # Clamp position to valid range
-    position = max(0.0, min(1.0, position))
-
-    # Blue to Red gradient with green in middle
-    red = int(255 * position)
-    green = int(255 * (1 - abs(2 * position - 1)))  # Peak at middle
-    blue = int(255 * (1 - position))
-
-    return DB.Color(red, green, blue)
+    """Color at ``position`` (0.0 to 1.0). Arithmetic in ``color_math``."""
+    return DB.Color(*interpolate_rgb(position))
 
 
 def check_view_compatibility(doc):
@@ -164,24 +72,11 @@ def check_view_compatibility(doc):
 
 
 def hex_to_rgb(hex_color):
-    """
-    Convert hex color string to RGB tuple
-
-    Args:
-        hex_color (str): Hex color string (e.g., "#FF0000" or "FF0000")
-
-    Returns:
-        tuple: RGB tuple (r, g, b)
-    """
-    # Remove # if present
-    hex_color = hex_color.lstrip("#")
-
-    # Convert to RGB
-    try:
-        return tuple(int(hex_color[i : i + 2], 16) for i in (0, 2, 4))
-    except (ValueError, IndexError):
+    """Hex string to RGB tuple; red as fallback. Parsing in ``color_math``."""
+    rgb = _hex_to_rgb(hex_color)
+    if rgb == (255, 0, 0) and str(hex_color).lstrip("#").upper() != "FF0000":
         logger.warning("Invalid hex color: %s. Using red as fallback.", hex_color)
-        return (255, 0, 0)
+    return rgb
 
 
 def get_parameter_value_safe(element, parameter_name):
@@ -418,38 +313,8 @@ def generate_random_color():
 
 
 def safe_float_conversion(value_str):
-    """
-    Safely convert a string value to float for sorting, based on script.py approach
-
-    Args:
-        value_str (str): String value to convert
-
-    Returns:
-        float: Converted value or infinity for non-numeric values
-    """
-    if not value_str or value_str == "None":
-        return float("inf")  # Put "None" values at the end
-
-    try:
-        # Handle unit suffixes like in script.py
-        clean_value = str(value_str).strip()
-
-        # Check if it has unit suffix (non-digit characters at the end)
-        suffix_index = 0
-        for char in reversed(clean_value):
-            if char.isdigit() or char == "." or char == "-" or char == "+":
-                break
-            suffix_index += 1
-
-        if suffix_index > 0:
-            # Remove unit suffix
-            numeric_part = clean_value[:-suffix_index]
-        else:
-            numeric_part = clean_value
-
-        return float(numeric_part)
-    except (ValueError, TypeError):
-        return float("inf")  # Non-numeric values go to end
+    """Sortable float; non-numeric goes last. Parsing in ``color_math``."""
+    return safe_float(value_str)
 
 
 def get_parameter_value_for_sorting(element, parameter_name):
