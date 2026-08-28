@@ -345,3 +345,37 @@ without Revit; the report is only as true as the API call that produced it.
 > a `changes` field meaning "the parameters that changed on this element".
 > Reusing the name would have silently overwritten one with the other. The
 > report gets the unambiguous name; the domain field keeps its own.
+
+## One undo for a whole job
+
+Every route opens its own transaction and commits — twenty-eight of them
+across sixteen files. If the agent makes eight calls and the sixth fails, the
+first five are already in the model.
+
+`DB.TransactionGroup` wraps the lot: the inner transactions still commit, and
+the *group* can be rolled back afterwards. Three routes drive it:
+
+| route | body | what Revit does |
+|---|---|---|
+| `POST /begin_job/` | `{"job_id": "..."}` | starts the group |
+| `POST /commit_job/` | `{"job_id": "..."}` | `Assimilate()` — the job becomes one undo entry |
+| `POST /abort_job/` | `{"job_id": "..."}` | `RollBack()` — the whole job is undone |
+
+Rules that are decisions, not details:
+
+- **A begin for a *different* job discards the one left open**, and the answer
+  says which job was discarded, by name. Someone will need to know why the
+  model went back.
+- **A repeated begin for the same job discards nothing.** It is not a new job;
+  it is the previous answer that got lost on the way back.
+- **Commit or abort naming a job that is not the open one is refused** (409).
+  Assimilating someone else's group would make the wrong job's work permanent.
+- **Commit with nothing open is a refusal, not a quiet success.** The gate
+  would otherwise read "committed" and believe a group wrapped the work.
+- **There is no timer.** If the agent dies mid-job, nothing runs on its own —
+  the next begin cleans up. The cost is real and stated: a model can sit with
+  an open group until someone calls again.
+
+The deciding lives in `revit_mcp/job_group.py`, which imports nothing from
+Revit and is covered on any machine. `job_routes.py` is three Revit calls and
+the plumbing.

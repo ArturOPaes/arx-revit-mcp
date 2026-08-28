@@ -21,6 +21,13 @@ def register_routes():
 
         register_status_routes(api)
 
+        # O grupo de transações por trabalho: um desfazer para o job inteiro,
+        # em vez de um por chamada. Registrado CEDO porque as rotas de escrita
+        # rodam dentro do grupo que ele abre.
+        from revit_mcp.job_routes import register_job_routes
+
+        register_job_routes(api)
+
         from revit_mcp.model_info import register_model_info_routes
 
         register_model_info_routes(api)
