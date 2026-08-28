@@ -5,6 +5,7 @@ Handles dimensions and wall tagging
 """
 
 from utils import get_element_name, get_element_id_value, make_element_id, suppress_warnings
+from .changes import ChangeReport
 from pyrevit import routes, revit, DB
 import json
 import traceback
@@ -191,6 +192,7 @@ def register_annotation_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        "changes_report": ChangeReport().created(created).to_dict(),
                         "created": created,
                         "count": len(created),
                         "message": message,

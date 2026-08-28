@@ -131,3 +131,48 @@ class TestAsMedicoes:
     def test_dois_ambientes_saem_na_ordem_em_que_foram_medidos(self):
         r = ChangeReport().room("b", "sala", {}).room("a", "dormitorio", {}).to_dict()
         assert [x["id"] for x in r["measurements"]["ambientes"]] == ["b", "a"]
+
+
+class TestUnidades:
+    """A API do Revit responde em unidade INTERNA, que é imperial.
+
+    No fork inteiro existe UM lugar que converte. Qualquer rota que passe a
+    reportar área sem converter entrega à conferência de norma um número 10,76
+    vezes menor — e a régua reprovaria um dormitório perfeitamente legal
+    citando o artigo e o trecho.
+    """
+
+    def test_area_de_pe_quadrado_para_metro_quadrado(self):
+        from revit_mcp.changes import sq_ft_to_m2
+
+        # 100 pés² são pouco mais de 9 m². Um dormitório de 9 m² reportado
+        # como "100" passaria por enorme; reportado como 9,29 é o que ele é.
+        assert sq_ft_to_m2(100) == 9.29
+
+    def test_comprimento_de_pe_para_metro(self):
+        from revit_mcp.changes import ft_to_m
+
+        # 8 pés é o pé-direito americano padrão: 2,44 m — abaixo do mínimo
+        # brasileiro de 2,50 na maioria dos municípios. Reportar "8" faria a
+        # régua achar que sobra folga de cinco metros.
+        assert ft_to_m(8) == 2.44
+
+    def test_a_conversao_e_a_exata_e_nao_a_arredondada(self):
+        from revit_mcp.changes import FT_TO_M, SQ_FT_TO_M2
+
+        # 0.092903 (seis casas) acumula erro em áreas grandes; o fator exato
+        # do pé internacional é 0.3048 ao quadrado.
+        assert SQ_FT_TO_M2 == FT_TO_M**2
+
+    def test_zero_continua_zero(self):
+        from revit_mcp.changes import ft_to_m, sq_ft_to_m2
+
+        assert sq_ft_to_m2(0) == 0.0
+        assert ft_to_m(0) == 0.0
+
+    def test_da_para_pedir_mais_casas_quando_a_regra_e_fracionaria(self):
+        from revit_mcp.changes import sq_ft_to_m2
+
+        # A regra de iluminação divide abertura por piso; arredondar os dois
+        # a duas casas antes de dividir move a fração.
+        assert sq_ft_to_m2(100, casas=4) == 9.2903

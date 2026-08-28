@@ -56,6 +56,33 @@ machine.
 MEDIDA_PELA_PONTE = "medida_pela_ponte"
 
 
+# --- units -------------------------------------------------------------
+#
+# The Revit API answers in INTERNAL units, which are imperial: an area comes
+# back in square feet and a length in feet, whatever the project's display
+# units say. In the whole fork exactly one place converts (``rooms.py``, sq ft
+# → m²), which means any route that starts reporting an area without
+# converting hands the conformity check a number 10.76× too small — and the
+# check would then reprove a perfectly legal bedroom while quoting the
+# article and the clause.
+#
+# The grandeza names in the contract carry their unit (``area_piso_m2``,
+# ``pe_direito_m``) precisely so this cannot be argued about. Convert here.
+
+SQ_FT_TO_M2 = 0.09290304
+FT_TO_M = 0.3048
+
+
+def sq_ft_to_m2(valor, casas=2):
+    """Revit internal area (sq ft) → m², rounded for the report."""
+    return round(float(valor) * SQ_FT_TO_M2, casas)
+
+
+def ft_to_m(valor, casas=2):
+    """Revit internal length (ft) → m, rounded for the report."""
+    return round(float(valor) * FT_TO_M, casas)
+
+
 def _as_id(value):
     """Element ids arrive as ints, ElementId wrappers or strings."""
     if value is None:

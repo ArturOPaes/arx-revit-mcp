@@ -5,6 +5,7 @@ Handles element deletion, modification, and selection retrieval
 """
 
 from utils import get_element_name, make_element_id, get_element_id_value, suppress_warnings
+from .changes import ChangeReport
 from pyrevit import routes, revit, DB
 import json
 import traceback
@@ -91,6 +92,14 @@ def register_editing_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        # Os cascateados entram na MESMA lista de apagados: uma
+                        # janela que sumiu junto com a parede sumiu do projeto,
+                        # e o gate de aprovação não pode mostrar só a parede —
+                        # é justamente o efeito colateral que a pessoa precisa
+                        # ver antes de dizer sim.
+                        "changes_report": ChangeReport()
+                        .deleted(deleted_ids, cascaded_ids)
+                        .to_dict(),
                         "deleted_count": len(deleted_ids),
                         "deleted_ids": deleted_ids,
                         "cascaded_ids": cascaded_ids,
@@ -237,6 +246,12 @@ def register_editing_routes(api):
                     data={
                         "status": "success",
                         "element_id": element_id,
+                        # `changes_report` e `changes` são coisas DIFERENTES, e
+                        # foi por isso que o relatório ganhou nome próprio:
+                        # aqui `changes` já queria dizer "os parâmetros que
+                        # mudaram", e um relatório de escrita entrando com o
+                        # mesmo nome teria apagado o outro sem sintoma.
+                        "changes_report": ChangeReport().modified(element_id).to_dict(),
                         "changes": changes,
                         "failed": failed,
                         "message": message,

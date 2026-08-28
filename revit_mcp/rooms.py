@@ -5,6 +5,7 @@ Handles room creation and room separation lines
 """
 
 from utils import get_element_name, get_element_id_value, make_element_id, suppress_warnings
+from .changes import ChangeReport, sq_ft_to_m2
 from pyrevit import routes, revit, DB
 from System.Collections.Generic import List
 import json
@@ -110,7 +111,11 @@ def register_room_routes(api):
                 try:
                     area_param = room.LookupParameter("Area")
                     if area_param and area_param.HasValue:
-                        area = round(area_param.AsDouble() * 0.092903, 2)  # sq ft to sq m
+                        # A conversão passou a vir de `changes.sq_ft_to_m2`: era
+                        # o ÚNICO lugar do fork que convertia, com o fator de
+                        # seis casas escrito à mão. Qualquer rota nova que
+                        # copiasse daqui herdava o fator; agora herda a função.
+                        area = sq_ft_to_m2(area_param.AsDouble())
                 except Exception:
                     pass
 
@@ -130,9 +135,27 @@ def register_room_routes(api):
                 except Exception:
                     pass
 
+                # O relatório que o gate de aprovação lê, e de onde a
+                # conferência de norma tira a medição. A procedência sai
+                # carimbada como medida pela ponte porque a área foi LIDA do
+                # modelo aqui, e não declarada por um agente no workdir.
+                relatorio = ChangeReport().created(get_element_id_value(room))
+                if area:
+                    relatorio.room(
+                        get_element_id_value(room),
+                        # O uso não é sabido aqui: quem cria a sala não diz
+                        # para que ela serve, e adivinhar pelo nome ("Suíte 1")
+                        # faria a régua conferir pela regra errada em silêncio.
+                        # Vazio, o servidor registra lacuna — que é verdade.
+                        "",
+                        {"area_piso_m2": {"valor": area, "bruta": "{} m2".format(area)}},
+                        nome=actual_name or actual_number or None,
+                    )
+
                 return routes.make_response(
                     data={
                         "status": "success",
+                        "changes_report": relatorio.to_dict(),
                         "room_id": get_element_id_value(room),
                         "name": actual_name,
                         "number": actual_number,
@@ -269,6 +292,7 @@ def register_room_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        "changes_report": ChangeReport().created(created_ids).to_dict(),
                         "line_count": len(created_ids),
                         "line_ids": created_ids,
                         "message": "Created {} room separation line{}".format(

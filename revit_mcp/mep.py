@@ -5,6 +5,7 @@ Handles duct, pipe, and MEP system creation
 """
 
 from utils import get_element_name, get_element_id_value, make_element_id, suppress_warnings
+from .changes import ChangeReport
 from pyrevit import routes, revit, DB
 import json
 import traceback
@@ -164,6 +165,7 @@ def register_mep_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        "changes_report": ChangeReport().created(get_element_id_value(duct)).to_dict(),
                         "duct_id": get_element_id_value(duct),
                         "system_type": get_element_name(target_system_type) if target_system_type else "None",
                         "duct_type": get_element_name(target_duct_type),
@@ -315,6 +317,7 @@ def register_mep_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        "changes_report": ChangeReport().created(get_element_id_value(pipe)).to_dict(),
                         "pipe_id": get_element_id_value(pipe),
                         "system_type": get_element_name(target_system_type) if target_system_type else "None",
                         "pipe_type": get_element_name(target_pipe_type),

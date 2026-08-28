@@ -37,14 +37,14 @@ def relatorio_de_exemplo():
 @pytest.mark.anyio
 async def test_o_relatorio_chega_identico_do_outro_lado(revit):
     relatorio = relatorio_de_exemplo()
-    revit.responde("/create_walls/", {"success": True, "changes": relatorio})
+    revit.responde("/create_walls/", {"success": True, "changes_report": relatorio})
 
     resposta = await revit.main.revit_post("/create_walls/", {"walls": []})
 
     # Idêntico, e não "equivalente": um float virando string, uma lista
     # reordenada ou uma chave a mais já são o MCP opinando sobre um fato do
     # Revit.
-    assert resposta["changes"] == relatorio
+    assert resposta["changes_report"] == relatorio
 
 
 @pytest.mark.anyio
@@ -53,11 +53,11 @@ async def test_a_procedencia_sobrevive_a_travessia(revit):
     # aqui faria uma medição real chegar ao servidor como desconhecida — o
     # lado seguro, e que apaga justamente a prova que este caminho existe
     # para produzir.
-    revit.responde("/rooms/", {"changes": relatorio_de_exemplo()})
+    revit.responde("/rooms/", {"changes_report": relatorio_de_exemplo()})
 
     resposta = await revit.main.revit_get("/rooms/")
 
-    medicoes = resposta["changes"]["measurements"]["ambientes"][0]["medicoes"]
+    medicoes = resposta["changes_report"]["measurements"]["ambientes"][0]["medicoes"]
     assert medicoes["area_piso_m2"]["procedencia"] == MEDIDA_PELA_PONTE
     assert medicoes["iluminacao"]["base"] == 12.5
 
@@ -67,9 +67,9 @@ async def test_rota_que_nao_muda_nada_atravessa_com_as_listas_vazias(revit):
     # E não com o campo ausente: "não mudei nada" e "não disse" são coisas
     # diferentes para o gate.
     vazio = {"created": [], "modified": [], "deleted": [], "measurements": {}}
-    revit.responde("/model_info/", {"changes": vazio})
+    revit.responde("/model_info/", {"changes_report": vazio})
 
     resposta = await revit.main.revit_get("/model_info/")
 
-    assert resposta["changes"] == vazio
-    assert "created" in resposta["changes"]
+    assert resposta["changes_report"] == vazio
+    assert "created" in resposta["changes_report"]

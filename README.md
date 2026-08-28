@@ -282,9 +282,9 @@ Contributions are welcome! Feel free to submit pull requests or open issues.
 
 MIT
 
-## The write report (`changes`) — contract
+## The write report (`changes_report`) — contract
 
-Every route that changes the model returns a `changes` object, and the MCP
+Every route that changes the model returns a `changes_report` object, and the MCP
 relays it untouched. It is what the ARCHITECTUS approval gate decides on, and
 what the conformity check reads before quoting a standard back at the
 architect — so the shape is fixed, and it is fixed on the server side
@@ -320,7 +320,7 @@ from revit_mcp.changes import ChangeReport
 report = ChangeReport()
 report.created(new_ids).modified(changed_ids)
 report.room(room.Id, "dormitorio", {"area_piso_m2": area}, nome=room.Name)
-return routes.make_response(data={"success": True, "changes": report.to_dict()})
+return routes.make_response(data={"success": True, "changes_report": report.to_dict()})
 ```
 
 Three rules that are not obvious, and that the tests hold:
@@ -340,3 +340,8 @@ Three rules that are not obvious, and that the tests hold:
 
 What none of this proves: that Revit accepted the operation. The suite runs
 without Revit; the report is only as true as the API call that produced it.
+
+> **Why `changes_report` and not `changes`.** `set_parameter` already returned
+> a `changes` field meaning "the parameters that changed on this element".
+> Reusing the name would have silently overwritten one with the other. The
+> report gets the unambiguous name; the domain field keeps its own.

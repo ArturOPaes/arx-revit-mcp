@@ -5,6 +5,7 @@ Handles element tagging with annotation symbols
 """
 
 from utils import get_element_name, get_element_id_value, make_element_id, suppress_warnings
+from .changes import ChangeReport
 from pyrevit import routes, revit, DB
 import json
 import traceback
@@ -222,6 +223,11 @@ def register_tag_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
+                        # As etiquetas CRIADAS, e não os elementos etiquetados:
+                        # etiquetar não muda a parede, cria uma anotação na
+                        # vista. Reportar os elementos como modificados faria o
+                        # gate pedir aprovação sobre coisa que ninguém tocou.
+                        "changes_report": ChangeReport().created(tagged_ids).to_dict(),
                         "tagged_count": len(tagged_ids),
                         "tag_ids": tagged_ids,
                         "skipped": skipped,
