@@ -230,3 +230,66 @@ class TestAEntregaAoTrabalho:
 
         assert recebidos == [({"created": ["7"]}, "/create_walls/")]
         assert not caplog.records, "avisou de uma falha que não houve"
+
+
+class TestOPassoQuePerdeuAViagem:
+    """Perder um passo não pode virar um plano que se apresenta como completo.
+
+    A primeira correção do `except: pass` só acrescentou log — e o log fica no
+    computador do arquiteto enquanto a DECISÃO acontece na tela. Um revisor
+    reproduziu: `commit_job` continuava respondendo 200, `ok: true`, com o
+    relatório vazio. "Nada mudaria" sobre um trabalho que mudaria cinco
+    paredes.
+    """
+
+    def test_a_perda_fica_registrada_e_nao_so_no_log(self):
+        from revit_mcp import changes
+
+        changes.esquecer_perdas()
+        changes.registrar_no_trabalho({"created": ["1"]}, "/create_walls/")
+        assert changes.passos_perdidos() == ["/create_walls/"]
+
+    def test_abrir_um_trabalho_novo_esquece_as_perdas_do_anterior(self):
+        from revit_mcp import changes
+
+        changes.esquecer_perdas()
+        changes.registrar_no_trabalho({}, "/create_walls/")
+        changes.esquecer_perdas()
+        assert changes.passos_perdidos() == []
+
+    def test_a_entrega_que_funciona_nao_registra_perda(self, monkeypatch):
+        import sys
+        import types
+
+        from revit_mcp import changes
+
+        falso = types.ModuleType("revit_mcp.job_routes")
+        falso.record_change = lambda r, route=None: None
+        monkeypatch.setitem(sys.modules, "revit_mcp.job_routes", falso)
+
+        changes.esquecer_perdas()
+        changes.registrar_no_trabalho({}, "/create_walls/")
+        assert changes.passos_perdidos() == []
+
+
+class TestIdentificadorDentroDeRegistro:
+    """`/create_dimensions/` acumula registros, não identificadores.
+
+    Sem tratar, `str()` transformava o registro inteiro num "id" que não
+    identifica elemento nenhum, e ele ia impresso no plano que o arquiteto
+    aprova.
+    """
+
+    def test_o_id_e_extraido_do_registro(self):
+        r = ChangeReport().created(
+            {"id": 317, "elements_dimensioned": [10, 11], "value": "3.00 m"}
+        ).to_dict()
+        assert r["created"] == ["317"]
+
+    def test_registro_sem_id_nao_vira_lixo_na_lista(self):
+        r = ChangeReport().created({"value": "3.00 m"}).to_dict()
+        assert r["created"] == []
+
+    def test_lista_de_registros_vira_lista_de_ids(self):
+        r = ChangeReport().created([{"id": 1}, {"id": 2}]).to_dict()
+        assert r["created"] == ["1", "2"]

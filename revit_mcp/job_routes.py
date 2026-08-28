@@ -31,6 +31,7 @@ from pyrevit import routes, DB
 import json
 import logging
 
+from . import changes
 from .job_group import (
     ASSIMILATE,
     OPEN,
@@ -65,23 +66,42 @@ def _abrir(doc, job_id):
 
 
 def _fechar(assimilar):
-    """Assimilate or roll back, and forget either way.
+    """Assimilate or roll back. Devolve o erro do Revit, ou None.
 
-    Forgetting even when the Revit call raises is deliberate: a group we can
-    no longer act on must not stay recorded as open, or the next begin would
-    try to roll back something that is not there.
+    Esquecer o grupo mesmo quando a chamada falha é deliberado: um grupo em que
+    não conseguimos mais mexer não pode ficar registrado como aberto, ou o
+    próximo `begin` tentaria desfazer algo que não está lá.
+
+    O que NÃO é deliberado, e era defeito: engolir a falha. A primeira versão
+    respondia `ok: true` e "nada persistiu" mesmo quando o `RollBack()` do
+    Revit levantava — ou seja, o ensaio podia ter ficado no modelo e a única
+    resposta afirmava o contrário. Um revisor reproduziu com um adaptador que
+    recusa o rollback. Agora o erro sobe.
     """
     global _grupo_aberto
     grupo, _grupo_aberto = _grupo_aberto, None
     if grupo is None:
-        return
+        return None
     try:
         if assimilar:
             grupo.Assimilate()
         else:
             grupo.RollBack()
-    except Exception as e:  # pragma: no cover - needs Revit
+        return None
+    except Exception as e:
         logger.warning("job group could not be closed: %s", e)
+        return str(e)
+
+
+def _falhou_ao_fechar(dados, erro, assimilar):
+    """A resposta deixa de afirmar o que não aconteceu."""
+    dados["ok"] = False
+    dados["revit_error"] = erro
+    dados["message"] = (
+        "o Revit recusou {} o grupo deste trabalho ({}). O que foi feito PODE "
+        "ter ficado no modelo — confira antes de seguir."
+    ).format("assimilar" if assimilar else "desfazer", erro)
+    return dados
 
 
 def record_change(changes_report, route=None):
@@ -99,6 +119,8 @@ def register_job_routes(api):
         corpo = _corpo(request)
         job_id = corpo.get("job_id")
         decisao = _grupos.begin(job_id, dry_run=bool(corpo.get("dry_run")))
+        if decisao.action in (OPEN, ROLLBACK_THEN_OPEN):
+            changes.esquecer_perdas()
         if decisao.action == ROLLBACK_THEN_OPEN:
             _fechar(assimilar=False)
             _abrir(doc, job_id)
@@ -116,14 +138,30 @@ def register_job_routes(api):
         ensaio = _grupos.dry_run
         relatorio = _grupos.rehearsal() if ensaio else None
         decisao = _grupos.commit(_corpo(request).get("job_id"))
+        dados = decisao.to_dict()
+        erro = None
         if decisao.action == ASSIMILATE:
-            _fechar(assimilar=True)
+            erro = _fechar(assimilar=True)
         elif decisao.action == ROLLBACK:
             # Ensaio: executou de verdade e desfaz no fim.
-            _fechar(assimilar=False)
-        dados = decisao.to_dict()
+            erro = _fechar(assimilar=False)
+        if erro:
+            dados = _falhou_ao_fechar(dados, erro, decisao.action == ASSIMILATE)
+            return routes.make_response(data=dados, status=500)
         if relatorio is not None and decisao.ok:
             dados["changes_report"] = relatorio
+            # Passo que não entrou na soma faz o plano MENTIR por omissão: ele
+            # diria "nada mudaria" sobre um trabalho que mudaria cinco paredes.
+            # A resposta deixa de se apresentar como completa.
+            perdidos = changes.passos_perdidos()
+            if perdidos:
+                dados["ok"] = False
+                dados["plano_incompleto"] = perdidos
+                dados["message"] = (
+                    "este plano está INCOMPLETO: {} passo(s) não entraram na soma ({}). "
+                    "O que está listado aconteceu, mas há mais — não aprove por ele."
+                ).format(len(perdidos), ", ".join(perdidos))
+                return routes.make_response(data=dados, status=409)
         return routes.make_response(data=dados, status=200 if decisao.ok else 409)
 
     @api.route("/abort_job/", methods=["POST"])

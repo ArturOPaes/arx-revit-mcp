@@ -244,6 +244,12 @@ def _merge(reports):
                 if item not in somado[chave]:
                     somado[chave].append(item)
         ambientes.extend((r.get("measurements") or {}).get("ambientes") or [])
+    # Um elemento CRIADO e depois modificado no mesmo trabalho é um elemento.
+    # Sem isto o plano dizia "1 criado, 1 modificado" para a mesma parede, e
+    # quem aprova lê dois elementos. Criar contém modificar: quem nasceu
+    # naquele trabalho não foi "alterado" nele.
+    somado["modified"] = [m for m in somado["modified"] if m not in somado["created"]]
+    somado["deleted"] = [d for d in somado["deleted"] if d not in somado["created"]]
     ambientes = _um_por_ambiente(ambientes)
     if ambientes:
         somado["measurements"]["ambientes"] = ambientes

@@ -362,3 +362,35 @@ class TestOMesmoAmbienteMedidoDuasVezes:
         grupos.record(self.medicao("sala-01", 9.5))
         ids = [a["id"] for a in grupos.rehearsal()["measurements"]["ambientes"]]
         assert ids == ["sala-01", "sala-02"]
+
+
+class TestCriarContemModificar:
+    """Um elemento criado e depois modificado no mesmo trabalho é UM elemento.
+
+    O teste anterior tinha o nome certo — "cria e depois modifica" — e
+    registrava `created` nas duas chamadas, então passava também na versão
+    quebrada. Um revisor apontou. O plano dizia "1 criado, 1 modificado" para a
+    mesma parede, e quem aprova lê dois elementos.
+    """
+
+    def test_criado_e_depois_modificado_nao_conta_duas_vezes(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.record({"created": [], "modified": ["7"], "deleted": [], "measurements": {}})
+        r = grupos.rehearsal()
+        assert r["created"] == ["7"]
+        assert r["modified"] == [], "a mesma parede apareceu como criada E modificada"
+
+    def test_modificar_algo_que_nao_foi_criado_aqui_continua_aparecendo(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["7"], "modified": ["9"], "deleted": [], "measurements": {}})
+        r = grupos.rehearsal()
+        assert r["modified"] == ["9"]
+
+    def test_criado_e_depois_apagado_no_mesmo_trabalho_nao_conta_como_apagado(self, grupos):
+        # Apagar o que nasceu neste trabalho não tira nada do projeto de quem
+        # aprova — o saldo é zero, e listar "1 apagado" assusta à toa.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.record({"created": [], "modified": [], "deleted": ["7"], "measurements": {}})
+        assert grupos.rehearsal()["deleted"] == []

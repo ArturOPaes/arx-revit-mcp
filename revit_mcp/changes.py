@@ -86,9 +86,20 @@ def ft_to_m(valor, casas=2):
 
 
 def _as_id(value):
-    """Element ids arrive as ints, ElementId wrappers or strings."""
+    """Element ids arrive as ints, ElementId wrappers, strings — or records.
+
+    ``/create_dimensions/`` accumulates ``{"id": 317, "elements_dimensioned":
+    [...], "value": "3.00 m"}`` and hands the whole list over. Without this,
+    ``str()`` turned the record into an "id" that identifies nothing:
+    ``"{'id': 317, 'elements_dimensioned': [10, 11], 'value': '3.00 m'}"``
+    printed in the plan the architect approves.
+    """
     if value is None:
         return None
+    if isinstance(value, dict):
+        value = value.get("id", value.get("element_id"))
+        if value is None:
+            return None
     texto = str(value).strip()
     return texto or None
 
@@ -194,6 +205,19 @@ def empty_report():
     return ChangeReport().to_dict()
 
 
+_perdidos = []
+
+
+def passos_perdidos():
+    """Os passos que não entraram na soma do trabalho, desde o último zerar."""
+    return list(_perdidos)
+
+
+def esquecer_perdas():
+    """Chamado ao abrir um trabalho: as perdas são POR trabalho."""
+    del _perdidos[:]
+
+
 def registrar_no_trabalho(relatorio, rota):
     """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
 
@@ -217,6 +241,13 @@ def registrar_no_trabalho(relatorio, rota):
 
         record_change(relatorio, route=rota)
     except Exception as e:
+        # Registrar a perda numa LISTA, e não só no log: o log fica no
+        # computador do arquiteto e a decisão acontece na tela. A primeira
+        # correção deste defeito só acrescentou o aviso, e o `commit_job`
+        # continuava respondendo 200 com o plano vazio — "nada mudaria",
+        # exatamente a mentira que o log deveria ter impedido. Um revisor
+        # apontou, e estava certo.
+        _perdidos.append(str(rota))
         logging.getLogger(__name__).warning(
             "o passo %s não entrou na soma do trabalho (%s) — se este job for um "
             "ensaio, o plano sai incompleto",
