@@ -284,7 +284,16 @@ MIT
 
 ## The write report (`changes_report`) — contract
 
-Every route that changes the model returns a `changes_report` object, and the MCP
+**Eight** of the 26 routes that open a transaction return a `changes_report`
+object today, and the MCP relays it untouched. The other eighteen are debt,
+listed in `tests/test_rotas_que_relatam.py`, and that test fails if the list
+grows or if one of the eight stops reporting.
+
+This paragraph used to say *"every route that changes the model returns a
+`changes_report`"*. It was false when written — a reviewer measured — and it is
+the most expensive kind of false line, because whoever reads it stops
+checking. A route that writes and does not report sums to zero in a rehearsal,
+and the architect approves a plan that never mentions what is about to happen.
 relays it untouched. It is what the ARCHITECTUS approval gate decides on, and
 what the conformity check reads before quoting a standard back at the
 architect — so the shape is fixed, and it is fixed on the server side

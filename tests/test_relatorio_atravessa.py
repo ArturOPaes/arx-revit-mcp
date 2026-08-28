@@ -6,6 +6,13 @@ O gate de aprovação do ARCHITECTUS decide sobre o `changes.json`, e a
 conferência de norma reprova projeto com base nas medições que vêm dentro
 dele. O relatório é do REVIT; o MCP é encanamento.
 
+**O que este arquivo prova, e o que não prova.** Ele prova que a camada HTTP
+não reescreve o relatório no caminho. Ele NÃO prova que alguma rota produz
+relatório — isso é `test_rotas_que_relatam.py`, e hoje são oito de vinte e
+seis. A primeira versão usava `/create_walls/`, uma rota que não existe no
+fork, e um revisor apontou que isso fazia o teste PARECER exercitar uma rota
+real. As rotas aqui são reais, e ainda assim o dublê é que responde.
+
 Se esta camada reescrevesse, arredondasse ou "melhorasse" qualquer coisa no
 caminho, o número que reprova o projeto de alguém passaria a ter dois autores
 — e o que a tela mostra como medido pela ponte teria passado por uma opinião
@@ -37,9 +44,9 @@ def relatorio_de_exemplo():
 @pytest.mark.anyio
 async def test_o_relatorio_chega_identico_do_outro_lado(revit):
     relatorio = relatorio_de_exemplo()
-    revit.responde("/create_walls/", {"success": True, "changes_report": relatorio})
+    revit.responde("/create_room/", {"success": True, "changes_report": relatorio})
 
-    resposta = await revit.main.revit_post("/create_walls/", {"walls": []})
+    resposta = await revit.main.revit_post("/create_room/", {"level": "L1"})
 
     # Idêntico, e não "equivalente": um float virando string, uma lista
     # reordenada ou uma chave a mais já são o MCP opinando sobre um fato do
