@@ -13,6 +13,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _registrar(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: `job_routes` importa `pyrevit`, e um import no
+    topo criaria um ciclo com módulos que ele registra.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception:  # pragma: no cover - o relatório vale mesmo sem trabalho aberto
+        pass
+    return relatorio
+
+
 MM_TO_FEET = 1.0 / 304.8
 
 
@@ -227,7 +242,7 @@ def register_tag_routes(api):
                         # etiquetar não muda a parede, cria uma anotação na
                         # vista. Reportar os elementos como modificados faria o
                         # gate pedir aprovação sobre coisa que ninguém tocou.
-                        "changes_report": ChangeReport().created(tagged_ids).to_dict(),
+                        "changes_report": _registrar(ChangeReport().created(tagged_ids).to_dict(), "/tag_elements/"),
                         "tagged_count": len(tagged_ids),
                         "tag_ids": tagged_ids,
                         "skipped": skipped,

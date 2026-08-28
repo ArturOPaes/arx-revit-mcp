@@ -379,3 +379,25 @@ Rules that are decisions, not details:
 The deciding lives in `revit_mcp/job_group.py`, which imports nothing from
 Revit and is covered on any machine. `job_routes.py` is three Revit calls and
 the plumbing.
+
+### Rehearsal (dry run)
+
+`POST /begin_job/` with `{"job_id": "...", "dry_run": true}` runs the job for
+real and rolls the group back at the end. `commit_job` then answers with the
+accumulated `changes_report` — what *would* have changed — and nothing
+persists in the model.
+
+This is what turns the ARCHITECTUS approval plan from prose the agent wrote
+into a report of an execution that actually happened. The format is the same
+as a real run, so the screen the architect reads does not change.
+
+**A rehearsal is neither free nor harmless: it executes.** A `RollBack` undoes
+the model, not the world. Anything that left the model already left — an
+exported file is on disk, a reloaded link points where it now points, a print
+job has printed. The report names those under `not_undone`, and the field is
+absent when nothing escaped, so it never becomes noise people learn to skip.
+
+What the suite proves: the accumulation, the deduplication across calls, that
+a rehearsal rolls back instead of assimilating, that the mode never leaks into
+the next job, and that the warnings appear by name. What it does not prove:
+that Revit assimilates or rolls a group back. That needs Revit.

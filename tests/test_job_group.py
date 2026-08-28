@@ -187,3 +187,125 @@ class TestAFormaDaResposta:
         d = grupos.abort(None).to_dict()
         assert d["ok"] is False
         assert grupos.open_job == "job-1"
+
+
+class TestOEnsaio:
+    """Dry-run: executa de verdade e desfaz no fim.
+
+    É o maior salto de confiança do fork. O plano de aprovação hoje é PROSA
+    que o agente escreveu, e o servidor só exige que ela não esteja vazia —
+    nada confere se descreve o que vai acontecer, e nada poderia. Com o
+    ensaio, o plano passa a ser o relatório do que aconteceu numa execução
+    de verdade que foi desfeita.
+    """
+
+    def test_o_ensaio_desfaz_no_fim_em_vez_de_assimilar(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        d = grupos.commit("job-1")
+        assert d.action == ROLLBACK, "um ensaio que assimila não é ensaio: persistiu"
+        assert "nothing persisted" in d.message
+
+    def test_o_trabalho_de_verdade_continua_assimilando(self, grupos):
+        grupos.begin("job-1")
+        assert grupos.commit("job-1").action == ASSIMILATE
+
+    def test_a_resposta_diz_que_e_ensaio_desde_o_comeco(self, grupos):
+        # Quem lê o registro precisa saber, na primeira linha, que nada disso
+        # vai ficar — e não descobrir só no fim.
+        assert "rehearsal" in grupos.begin("job-1", dry_run=True).message
+        assert grupos.dry_run is True
+
+    def test_trabalho_de_VERDADE_comecado_por_cima_de_um_ensaio_nao_herda_o_ensaio(self, grupos):
+        # Este é o caso que perde trabalho de gente: o ensaio ficou aberto, um
+        # job de verdade começa por cima, e se herdasse o modo tudo o que ele
+        # fizesse seria desfeito no fim — o arquiteto aprovaria e nada teria
+        # acontecido, sem uma linha explicando por quê.
+        grupos.begin("job-1", dry_run=True)
+        grupos.begin("job-2")
+        assert grupos.dry_run is False
+        assert grupos.commit("job-2").action == ASSIMILATE
+
+    def test_depois_do_ensaio_o_proximo_trabalho_nao_herda_o_modo(self, grupos):
+        # Herdar faria um trabalho de verdade ser silenciosamente desfeito —
+        # o arquiteto aprovaria e nada aconteceria.
+        grupos.begin("job-1", dry_run=True)
+        grupos.commit("job-1")
+        grupos.begin("job-2")
+        assert grupos.dry_run is False
+        assert grupos.commit("job-2").action == ASSIMILATE
+
+
+class TestOQueOEnsaioRELATA:
+    def test_soma_o_que_cada_chamada_teria_mudado(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["1"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.record({"created": ["2"], "modified": ["9"], "deleted": [], "measurements": {}})
+        r = grupos.rehearsal()
+        assert r["created"] == ["1", "2"]
+        assert r["modified"] == ["9"]
+
+    def test_o_mesmo_elemento_em_duas_chamadas_conta_UMA(self, grupos):
+        # O agente que cria e depois modifica a mesma parede mexeu numa
+        # parede; um plano dizendo "2" pede aprovação sobre estrago maior do
+        # que o real.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
+        assert grupos.rehearsal()["created"] == ["7"]
+
+    def test_as_medicoes_de_todas_as_chamadas_entram(self, grupos):
+        # É o que permitiria conferir a norma ANTES de qualquer escrita:
+        # "este projeto ficaria não conforme se você aprovar".
+        grupos.begin("job-1", dry_run=True)
+        for i in (1, 2):
+            grupos.record(
+                {
+                    "created": [],
+                    "modified": [],
+                    "deleted": [],
+                    "measurements": {"ambientes": [{"id": str(i), "uso": "dormitorio", "medicoes": {}}]},
+                }
+            )
+        assert len(grupos.rehearsal()["measurements"]["ambientes"]) == 2
+
+    def test_o_acumulado_e_por_TRABALHO_e_nao_vaza_para_o_seguinte(self, grupos):
+        # Vazar faria o plano de aprovação de um job mostrar o que outro teria
+        # mudado — e alguém aprovaria uma coisa lendo outra.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["1"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.begin("job-2", dry_run=True)
+        assert grupos.rehearsal()["created"] == []
+
+
+class TestOQueOEnsaioNAODesfaz:
+    """Dry-run não é gratuito nem inócuo: ele EXECUTA.
+
+    O que saiu do modelo já saiu. Um ensaio que se apresenta como "nada
+    aconteceu" enquanto um PDF foi escrito na área de trabalho do arquiteto é
+    a mentira calada que este módulo existe para não contar.
+    """
+
+    def test_exportar_e_avisado_pelo_NOME_do_efeito(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": [], "modified": [], "deleted": [], "measurements": {}},
+                      route="/export_sheets_pdf/")
+        assert grupos.rehearsal()["not_undone"] == ["arquivos exportados ficam no disco"]
+
+    def test_sem_efeito_que_escapa_o_campo_nao_aparece(self, grupos):
+        # Um aviso vazio em toda resposta ensina a pessoa a ignorar o campo.
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["1"], "modified": [], "deleted": [], "measurements": {}},
+                      route="/create_walls/")
+        assert "not_undone" not in grupos.rehearsal()
+
+    def test_o_mesmo_aviso_nao_repete_por_duas_chamadas(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        for _ in range(3):
+            grupos.record({}, route="/export_dwg/")
+        assert len(grupos.rehearsal()["not_undone"]) == 1
+
+    def test_avisos_diferentes_saem_todos(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({}, route="/export_pdf/")
+        grupos.record({}, route="/reload_link/")
+        assert len(grupos.rehearsal()["not_undone"]) == 2

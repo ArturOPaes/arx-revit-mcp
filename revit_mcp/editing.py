@@ -13,6 +13,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _registrar(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: `job_routes` importa `pyrevit`, e um import no
+    topo criaria um ciclo com módulos que ele registra.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception:  # pragma: no cover - o relatório vale mesmo sem trabalho aberto
+        pass
+    return relatorio
+
+
 
 def register_editing_routes(api):
     """Register all editing routes with the API"""
@@ -97,9 +112,10 @@ def register_editing_routes(api):
                         # e o gate de aprovação não pode mostrar só a parede —
                         # é justamente o efeito colateral que a pessoa precisa
                         # ver antes de dizer sim.
-                        "changes_report": ChangeReport()
-                        .deleted(deleted_ids, cascaded_ids)
-                        .to_dict(),
+                        "changes_report": _registrar(
+                            ChangeReport().deleted(deleted_ids, cascaded_ids).to_dict(),
+                            "/delete_elements/",
+                        ),
                         "deleted_count": len(deleted_ids),
                         "deleted_ids": deleted_ids,
                         "cascaded_ids": cascaded_ids,
@@ -251,7 +267,7 @@ def register_editing_routes(api):
                         # aqui `changes` já queria dizer "os parâmetros que
                         # mudaram", e um relatório de escrita entrando com o
                         # mesmo nome teria apagado o outro sem sintoma.
-                        "changes_report": ChangeReport().modified(element_id).to_dict(),
+                        "changes_report": _registrar(ChangeReport().modified(element_id).to_dict(), "/set_parameter/"),
                         "changes": changes,
                         "failed": failed,
                         "message": message,

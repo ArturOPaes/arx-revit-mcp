@@ -37,6 +37,36 @@ all. Those are the cases that lose someone's work, and they are all decidable
 without Revit. This module decides; the route performs.
 """
 
+# Effects that a RollBack does NOT undo.
+#
+# A dry run *executes*: the group is rolled back at the end, so nothing sticks
+# **in the model**. Everything that left the model already left. Exporting a
+# sheet writes a file to disk; reloading a link changes what the document
+# points at on disk; anything that calls out has already called out.
+#
+# This list is what the rehearsal report warns about, by name. A dry run that
+# reads as "nothing happened" while a PDF was written to the architect's
+# desktop is the kind of quiet lie this whole file exists to avoid.
+ESCAPES_ROLLBACK = {
+    "export": "arquivos exportados ficam no disco",
+    "import": "o que foi importado de fora já foi lido",
+    "link": "vínculos recarregados apontam para o que apontam agora",
+    "print": "o que foi impresso ou publicado já saiu",
+    "save": "salvar grava o arquivo, e salvar não se desfaz",
+}
+
+
+def escapes_in(route_paths):
+    """Which warnings apply to the routes a job actually called."""
+    achados = []
+    for caminho in route_paths or []:
+        baixo = str(caminho).lower()
+        for chave, aviso in sorted(ESCAPES_ROLLBACK.items()):
+            if chave in baixo and aviso not in achados:
+                achados.append(aviso)
+    return achados
+
+
 # What the route must do to the Revit TransactionGroup.
 OPEN = "open"
 ROLLBACK_THEN_OPEN = "rollback_then_open"
@@ -74,12 +104,41 @@ class JobGroups(object):
 
     def __init__(self):
         self._open_job = None
+        self._dry_run = False
+        self._reports = []
+        self._routes = []
 
     @property
     def open_job(self):
         return self._open_job
 
-    def begin(self, job_id):
+    @property
+    def dry_run(self):
+        return self._dry_run
+
+    def record(self, changes_report, route=None):
+        """A write route ran; keep what it changed, and where.
+
+        Kept even outside a job: a route that ran with no job open still
+        changed the model, and dropping the record would make the transcript
+        quieter than the truth.
+        """
+        if changes_report:
+            self._reports.append(changes_report)
+        if route:
+            self._routes.append(str(route))
+
+    def rehearsal(self):
+        """The accumulated report of the job, plus what a rollback will not undo."""
+        somado = _merge(self._reports)
+        avisos = escapes_in(self._routes)
+        if avisos:
+            # Nomeados, não contados: "3 efeitos não revertidos" não diz à
+            # pessoa o que procurar no computador dela.
+            somado["not_undone"] = avisos
+        return somado
+
+    def begin(self, job_id, dry_run=False):
         job_id = _clean(job_id)
         if not job_id:
             # A group with no name cannot be committed or aborted by name
@@ -94,7 +153,7 @@ class JobGroups(object):
 
         if self._open_job is not None:
             anterior = self._open_job
-            self._open_job = job_id
+            self._reiniciar(job_id, dry_run)
             return Decision(
                 ROLLBACK_THEN_OPEN,
                 "job {} was left open and is being discarded so job {} can start".format(
@@ -103,8 +162,19 @@ class JobGroups(object):
                 discarded_job=anterior,
             )
 
+        self._reiniciar(job_id, dry_run)
+        return Decision(
+            OPEN,
+            "job {} started{}".format(job_id, " as a rehearsal" if dry_run else ""),
+        )
+
+    def _reiniciar(self, job_id, dry_run):
         self._open_job = job_id
-        return Decision(OPEN, "job {} started".format(job_id))
+        self._dry_run = bool(dry_run)
+        # O acumulado é POR TRABALHO: carregar o do anterior faria o plano de
+        # aprovação de um job mostrar o que outro teria mudado.
+        self._reports = []
+        self._routes = []
 
     def commit(self, job_id):
         job_id = _clean(job_id)
@@ -120,7 +190,16 @@ class JobGroups(object):
                 "job {} is open, not {}".format(self._open_job, job_id),
                 ok=False,
             )
+        ensaio = self._dry_run
         self._open_job = None
+        self._dry_run = False
+        if ensaio:
+            # O ENSAIO desfaz no fim — é o que o torna ensaio. E devolve o
+            # relatório do que TERIA mudado, que é o plano de aprovação
+            # deixando de ser prosa do agente para ser observação.
+            return Decision(
+                ROLLBACK, "rehearsal of job {} undone; nothing persisted".format(job_id)
+            )
         return Decision(ASSIMILATE, "job {} committed".format(job_id))
 
     def abort(self, job_id):
@@ -134,6 +213,7 @@ class JobGroups(object):
                 ok=False,
             )
         self._open_job = None
+        self._dry_run = False
         return Decision(ROLLBACK, "job {} discarded".format(job_id))
 
     def forget(self):
@@ -143,8 +223,27 @@ class JobGroups(object):
         would make the next begin roll back a group that no longer exists."""
         anterior = self._open_job
         self._open_job = None
+        self._dry_run = False
         return anterior
 
 
 def _clean(job_id):
     return None if job_id is None else str(job_id).strip() or None
+
+
+def _merge(reports):
+    """Soma os relatórios das chamadas num só, do jeito que o contrato pede."""
+    somado = {"created": [], "modified": [], "deleted": [], "measurements": {}}
+    ambientes = []
+    for r in reports:
+        for chave in ("created", "modified", "deleted"):
+            for item in r.get(chave) or []:
+                # Deduplicado ENTRE chamadas também: o agente que cria e depois
+                # modifica a mesma parede mexeu numa parede, e um plano que
+                # diga "2" pede aprovação sobre um estrago maior do que o real.
+                if item not in somado[chave]:
+                    somado[chave].append(item)
+        ambientes.extend((r.get("measurements") or {}).get("ambientes") or [])
+    if ambientes:
+        somado["measurements"]["ambientes"] = ambientes
+    return somado

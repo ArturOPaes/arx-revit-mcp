@@ -13,6 +13,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _registrar(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: `job_routes` importa `pyrevit`, e um import no
+    topo criaria um ciclo com módulos que ele registra.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception:  # pragma: no cover - o relatório vale mesmo sem trabalho aberto
+        pass
+    return relatorio
+
+
 MM_TO_FEET = 1.0 / 304.8
 
 
@@ -192,7 +207,7 @@ def register_annotation_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
-                        "changes_report": ChangeReport().created(created).to_dict(),
+                        "changes_report": _registrar(ChangeReport().created(created).to_dict(), "/create_dimensions/"),
                         "created": created,
                         "count": len(created),
                         "message": message,

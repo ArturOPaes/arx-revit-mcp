@@ -85,11 +85,21 @@ def _fechar(assimilar):
         logger.warning("job group could not be closed: %s", e)
 
 
+def record_change(changes_report, route=None):
+    """Uma rota de escrita rodou. Guarda o que ela mudou, para o ensaio somar.
+
+    Chamada pelas próprias rotas, e de propósito fora do `api.route`: o que
+    interessa é o relatório que ela já monta, não interceptar a resposta.
+    """
+    _grupos.record(changes_report, route=route)
+
+
 def register_job_routes(api):
     @api.route("/begin_job/", methods=["POST"])
     def begin_job_handler(doc, request):
-        job_id = _corpo(request).get("job_id")
-        decisao = _grupos.begin(job_id)
+        corpo = _corpo(request)
+        job_id = corpo.get("job_id")
+        decisao = _grupos.begin(job_id, dry_run=bool(corpo.get("dry_run")))
         if decisao.action == ROLLBACK_THEN_OPEN:
             _fechar(assimilar=False)
             _abrir(doc, job_id)
@@ -101,12 +111,21 @@ def register_job_routes(api):
 
     @api.route("/commit_job/", methods=["POST"])
     def commit_job_handler(doc, request):
+        # O relatório é lido ANTES de fechar: `commit` zera o acumulado do
+        # trabalho, e ler depois devolveria um plano vazio justamente na
+        # resposta que deveria carregá-lo.
+        ensaio = _grupos.dry_run
+        relatorio = _grupos.rehearsal() if ensaio else None
         decisao = _grupos.commit(_corpo(request).get("job_id"))
         if decisao.action == ASSIMILATE:
             _fechar(assimilar=True)
-        return routes.make_response(
-            data=decisao.to_dict(), status=200 if decisao.ok else 409
-        )
+        elif decisao.action == ROLLBACK:
+            # Ensaio: executou de verdade e desfaz no fim.
+            _fechar(assimilar=False)
+        dados = decisao.to_dict()
+        if relatorio is not None and decisao.ok:
+            dados["changes_report"] = relatorio
+        return routes.make_response(data=dados, status=200 if decisao.ok else 409)
 
     @api.route("/abort_job/", methods=["POST"])
     def abort_job_handler(doc, request):

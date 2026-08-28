@@ -14,6 +14,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _registrar(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: `job_routes` importa `pyrevit`, e um import no
+    topo criaria um ciclo com módulos que ele registra.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception:  # pragma: no cover - o relatório vale mesmo sem trabalho aberto
+        pass
+    return relatorio
+
+
 MM_TO_FEET = 1.0 / 304.8
 
 
@@ -155,7 +170,7 @@ def register_room_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
-                        "changes_report": relatorio.to_dict(),
+                        "changes_report": _registrar(relatorio.to_dict(), "/create_room/"),
                         "room_id": get_element_id_value(room),
                         "name": actual_name,
                         "number": actual_number,
@@ -292,7 +307,7 @@ def register_room_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
-                        "changes_report": ChangeReport().created(created_ids).to_dict(),
+                        "changes_report": _registrar(ChangeReport().created(created_ids).to_dict(), "/create_room_separation/"),
                         "line_count": len(created_ids),
                         "line_ids": created_ids,
                         "message": "Created {} room separation line{}".format(

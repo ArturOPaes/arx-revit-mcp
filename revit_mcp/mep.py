@@ -13,6 +13,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def _registrar(relatorio, rota):
+    """Devolve o relatório e o entrega ao trabalho corrente, para o ensaio somar.
+
+    Import tardio de propósito: `job_routes` importa `pyrevit`, e um import no
+    topo criaria um ciclo com módulos que ele registra.
+    """
+    try:
+        from .job_routes import record_change
+
+        record_change(relatorio, route=rota)
+    except Exception:  # pragma: no cover - o relatório vale mesmo sem trabalho aberto
+        pass
+    return relatorio
+
+
 MM_TO_FEET = 1.0 / 304.8
 
 
@@ -165,7 +180,7 @@ def register_mep_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
-                        "changes_report": ChangeReport().created(get_element_id_value(duct)).to_dict(),
+                        "changes_report": _registrar(ChangeReport().created(get_element_id_value(duct)).to_dict(), "/create_duct/"),
                         "duct_id": get_element_id_value(duct),
                         "system_type": get_element_name(target_system_type) if target_system_type else "None",
                         "duct_type": get_element_name(target_duct_type),
@@ -317,7 +332,7 @@ def register_mep_routes(api):
                 return routes.make_response(
                     data={
                         "status": "success",
-                        "changes_report": ChangeReport().created(get_element_id_value(pipe)).to_dict(),
+                        "changes_report": _registrar(ChangeReport().created(get_element_id_value(pipe)).to_dict(), "/create_pipe/"),
                         "pipe_id": get_element_id_value(pipe),
                         "system_type": get_element_name(target_system_type) if target_system_type else "None",
                         "pipe_type": get_element_name(target_pipe_type),
