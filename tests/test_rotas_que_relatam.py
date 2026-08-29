@@ -24,9 +24,18 @@ import pytest
 RAIZ = Path(__file__).resolve().parent.parent
 
 # Rotas que ABREM TRANSAÇÃO e ainda não devolvem `changes_report`.
-# Medido em 28/08/2026. Encolher esta lista é o trabalho; deixá-la crescer é o
-# defeito.
+# Medido em 28/08/2026, e REMEDIDO no mesmo dia depois que um revisor mostrou
+# que o inventário subcontava: eu procurava `Transaction(` no trecho do
+# handler, e isso perdia transação aberta em ajudante e rota que muda disco sem
+# transação nenhuma. Eram 18; são 22.
+#
+# Encolher esta lista é o trabalho; deixá-la crescer é o defeito. E ela não é
+# permissão: `/execute_code/` roda código arbitrário dentro de transação, e
+# `/export_document/`, `/export_ifc/` e `/link_file/` escapam do rollback sem
+# nem aparecer no aviso, porque a rota nunca é registrada.
 SEM_RELATORIO = {
+    "/clear_colors/",
+    "/color_splash/",
     "/create_detail_line/",
     "/create_framing/",
     "/create_grid/",
@@ -41,15 +50,40 @@ SEM_RELATORIO = {
     "/export_document/",
     "/export_ifc/",
     "/link_file/",
+    "/load_family/",
     "/place_family/",
+    "/save_document/",
     "/set_parameter/",
     "/tag_walls/",
     "/transform_elements/",
 }
 
 
+# Escrita que NÃO abre transação, e por isso escapava do inventário.
+#
+# Um revisor mediu o buraco: eu procurava `Transaction(` dentro do trecho da
+# rota, e isso perde três coisas — transação aberta num AJUDANTE (fora do
+# trecho), e rota que muda disco ou modelo sem transação nenhuma. Contar 26
+# quando são pelo menos 30 fazia a dívida parecer menor do que é.
+MUTAM_SEM_TRANSACAO = {
+    "/save_document/",   # grava o arquivo; salvar não se desfaz
+    "/load_family/",     # traz família para o modelo
+}
+
+# Rotas cuja transação vive num ajudante, fora do trecho do handler.
+TRANSACAO_EM_AJUDANTE = {
+    "/color_splash/",
+    "/clear_colors/",
+}
+
+
 def inventario():
-    """(caminho, escreve, relata) para cada rota do fork."""
+    """(caminho, escreve, relata) para cada rota do fork.
+
+    "Escreve" é mais largo que "abre transação no próprio handler" — foi
+    exatamente essa estreiteza que um revisor mediu, e ela fazia a lista de
+    dívida parecer menor do que é.
+    """
     achadas = []
     for arquivo in sorted((RAIZ / "revit_mcp").glob("*.py")):
         texto = arquivo.read_text(encoding="utf-8")
@@ -57,13 +91,13 @@ def inventario():
         for i, m in enumerate(marcas):
             fim = marcas[i + 1].start() if i + 1 < len(marcas) else len(texto)
             corpo = texto[m.end() : fim]
-            achadas.append(
-                (
-                    m.group(1),
-                    "Transaction(" in corpo,
-                    "changes_report" in corpo,
-                )
+            caminho = m.group(1)
+            escreve = (
+                "Transaction(" in corpo
+                or caminho in MUTAM_SEM_TRANSACAO
+                or caminho in TRANSACAO_EM_AJUDANTE
             )
+            achadas.append((caminho, escreve, "changes_report" in corpo))
     return achadas
 
 
@@ -95,6 +129,20 @@ def test_pelo_menos_as_instrumentadas_continuam_relatando():
     # As oito que já relatam são o piso: perder qualquer uma é regressão.
     relatam = {c for c, escreve, relata in inventario() if escreve and relata}
     assert len(relatam) >= 8, f"o número de rotas que relatam caiu para {len(relatam)}: {sorted(relatam)}"
+
+
+def test_o_inventario_enxerga_escrita_que_nao_abre_transacao():
+    """A estreiteza que um revisor mediu.
+
+    Procurar `Transaction(` dentro do trecho do handler perde três coisas:
+    transação aberta num ajudante, rota que grava em disco, e rota que traz
+    coisa para o modelo sem transação. Contar 26 quando são 30 fazia a dívida
+    parecer menor do que é — e uma dívida subcontada é pior que uma dívida
+    grande, porque ninguém sabe o tamanho do buraco.
+    """
+    escrevem = {c for c, escreve, _ in inventario() if escreve}
+    for caminho in MUTAM_SEM_TRANSACAO | TRANSACAO_EM_AJUDANTE:
+        assert caminho in escrevem, f"{caminho} muda o modelo e sumiu do inventário"
 
 
 @pytest.mark.parametrize("caminho", sorted(SEM_RELATORIO))

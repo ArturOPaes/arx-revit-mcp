@@ -284,10 +284,16 @@ MIT
 
 ## The write report (`changes_report`) — contract
 
-**Eight** of the 26 routes that open a transaction return a `changes_report`
-object today, and the MCP relays it untouched. The other eighteen are debt,
+**Eight** of the 30 routes that change the model return a `changes_report`
+object today, and the MCP relays it untouched. The other twenty-two are debt,
 listed in `tests/test_rotas_que_relatam.py`, and that test fails if the list
 grows or if one of the eight stops reporting.
+
+The first version of this paragraph said 26, because the inventory only looked
+for `Transaction(` inside the handler — missing transactions opened in a
+helper, and routes that write to disk or pull things into the model without a
+transaction at all. A reviewer measured it. An undercounted debt is worse than
+a large one: nobody knows the size of the hole.
 
 This paragraph used to say *"every route that changes the model returns a
 `changes_report`"*. It was false when written — a reviewer measured — and it is

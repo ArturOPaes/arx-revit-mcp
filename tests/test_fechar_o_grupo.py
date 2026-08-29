@@ -224,7 +224,7 @@ def test_begin_por_cima_de_um_grupo_que_nao_desfaz_nao_abre_outro(rotas):
     assert dados["ok"] is False
 
 
-def test_o_revit_recusando_ABRIR_nao_deixa_trabalho_fantasma(rotas, monkeypatch):
+def test_o_revit_recusando_abrir_nao_deixa_trabalho_fantasma(rotas, monkeypatch):
     """`Start()` que falha deixava o trabalho registrado como aberto.
 
     A decisão pura é tomada antes do efeito. Sem compensar, o `begin` seguinte
@@ -249,3 +249,131 @@ def test_o_revit_recusando_ABRIR_nao_deixa_trabalho_fantasma(rotas, monkeypatch)
     FalsoGrupo.recusa = False
     status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "d"}))
     assert dados["action"] == "open", f"trabalho fantasma: {dados}"
+
+
+def test_falha_transitoria_pode_ser_tentada_de_novo(rotas):
+    """Jogar fora a referência não torna o estado seguro; torna-o irrecuperável.
+
+    Um revisor mediu: o primeiro `abort` recusado devolvia 500 e apagava o
+    dono; o segundo, com o Revit já aceitando, respondia "no job is open" — e
+    a única referência para fechar o grupo tinha sumido.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+
+    FalsoGrupo.recusa = True
+    status, _ = handlers["/abort_job/"](None, Pedido({"job_id": "a"}))
+    assert status == 500
+
+    # A recusa passou. A segunda tentativa tem de FUNCIONAR.
+    FalsoGrupo.recusa = False
+    status, dados = handlers["/abort_job/"](None, Pedido({"job_id": "a"}))
+    assert status == 200, f"a segunda tentativa não achou o trabalho: {dados}"
+    assert dados["action"] == "rollback"
+
+
+def test_o_start_que_falha_no_ramo_de_substituicao_tambem_e_tratado(rotas, monkeypatch):
+    """O `try` cobria só o primeiro `begin`.
+
+    Um revisor mediu: `a` abre, o rollback de `a` funciona, o `Start()` de `b`
+    levanta — a exceção escapava, o dono já era `b`, e o `begin b` seguinte
+    respondia "já está aberto" sobre um grupo que nunca abriu.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+
+    class NaoAbre(FalsoGrupo):
+        def Start(self):
+            raise RuntimeError("start refused")
+
+    monkeypatch.setattr(jr.DB, "TransactionGroup", lambda doc, nome: NaoAbre())
+    status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    assert status == 500 and dados["ok"] is False
+
+    # E `b` não ficou registrado: o próximo begin ABRE.
+    monkeypatch.setattr(jr.DB, "TransactionGroup", lambda doc, nome: FalsoGrupo())
+    status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    assert dados["action"] == "open", f"trabalho fantasma no ramo de substituição: {dados}"
+
+
+def test_a_perda_do_trabalho_anterior_sobrevive_a_um_begin_que_falha(rotas, monkeypatch):
+    """A evidência era apagada antes de saber se o novo trabalho começou.
+
+    Reprodução do revisor: perda registrada em `a`, o rollback de `a` recusa,
+    o `begin b` volta 500 — e `passos_perdidos()` voltava vazio. A perda de
+    `a` era destruída, e o plano dele passaria a se apresentar como completo.
+    """
+    jr, _ = rotas
+    from revit_mcp import changes
+
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a", "dry_run": True}))
+
+    # A entrega do passo falha — é o caso que produz perda. Aqui o
+    # `job_routes` é importável (o pyRevit é de mentira), então a falha
+    # precisa ser provocada.
+    def recusa(*_a, **_k):
+        raise RuntimeError("collector offline")
+
+    monkeypatch.setattr(jr, "record_change", recusa)
+    changes.registrar_no_trabalho({}, "/create_walls/")
+    assert changes.passos_perdidos() == ["/create_walls/"]
+
+    FalsoGrupo.recusa = True
+    try:
+        status, _ = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    finally:
+        FalsoGrupo.recusa = False
+
+    assert status == 500
+    assert changes.passos_perdidos() == ["/create_walls/"], (
+        "a perda do trabalho anterior foi apagada antes de o novo começar"
+    )
+
+
+def test_o_commit_recusado_tambem_pode_ser_tentado_de_novo(rotas):
+    # A mesma regra do abort, no caminho que de fato importa: um trabalho de
+    # verdade cuja assimilação falha não pode perder a referência — é o
+    # trabalho do arquiteto que fica no limbo.
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+
+    FalsoGrupo.recusa = True
+    status, _ = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+    assert status == 500
+
+    FalsoGrupo.recusa = False
+    status, dados = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+    assert status == 200, f"a segunda tentativa de confirmar não achou o trabalho: {dados}"
+    assert dados["action"] == "assimilate"
+
+
+def test_um_trabalho_novo_comeca_sem_as_perdas_do_anterior(rotas, monkeypatch):
+    # O outro lado do teste acima: quando o begin dá certo, a evidência do
+    # trabalho anterior tem de sair — senão o plano do novo nasce carregando
+    # uma incompletude que não é dele.
+    jr, _ = rotas
+    from revit_mcp import changes
+
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a", "dry_run": True}))
+
+    def recusa(*_a, **_k):
+        raise RuntimeError("collector offline")
+
+    monkeypatch.setattr(jr, "record_change", recusa)
+    changes.registrar_no_trabalho({}, "/create_walls/")
+    assert changes.passos_perdidos() == ["/create_walls/"]
+
+    monkeypatch.undo()
+    status, _ = handlers["/begin_job/"](None, Pedido({"job_id": "b", "dry_run": True}))
+    assert status == 200
+    assert changes.passos_perdidos() == [], "o trabalho novo herdou a perda do anterior"

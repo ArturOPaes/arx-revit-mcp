@@ -216,6 +216,29 @@ class JobGroups(object):
         self._dry_run = False
         return Decision(ROLLBACK, "job {} discarded".format(job_id))
 
+    def restaurar(self, job_id, dry_run, reports=None, routes=None):
+        """Devolve o trabalho ao estado aberto.
+
+        Existe porque a decisão é tomada ANTES do efeito: `commit` e `abort`
+        já apagaram o dono quando a chamada ao Revit falha. Sem devolver, o
+        `abort` seguinte responde "no job is open" e a única referência para
+        tentar de novo se perdeu — um revisor mediu exatamente isso, com uma
+        falha transitória que na segunda tentativa teria funcionado.
+
+        Jogar fora a referência não torna o estado seguro; torna-o
+        irrecuperável.
+        """
+        self._open_job = _clean(job_id)
+        self._dry_run = bool(dry_run)
+        if reports is not None:
+            self._reports = list(reports)
+        if routes is not None:
+            self._routes = list(routes)
+
+    def instantaneo(self):
+        """O que precisa ser devolvido se o fechamento falhar."""
+        return (self._open_job, self._dry_run, list(self._reports), list(self._routes))
+
     def forget(self):
         """The group is gone for a reason outside our reach — Revit closed,
         the document was shut. Forgetting is not a rollback: whatever the

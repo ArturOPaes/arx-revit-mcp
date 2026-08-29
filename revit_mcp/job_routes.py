@@ -88,18 +88,22 @@ def _fechar(assimilar):
     recusa o rollback. Agora o erro sobe.
     """
     global _grupo_aberto
-    grupo, _grupo_aberto = _grupo_aberto, None
+    grupo = _grupo_aberto
     if grupo is None:
+        _grupo_aberto = None
         return None
     try:
         if assimilar:
             grupo.Assimilate()
         else:
             grupo.RollBack()
-        return None
     except Exception as e:
+        # O grupo FICA. Uma falha pode ser transitória, e apagar a referência
+        # transforma "tente de novo" em "não há mais como tentar".
         logger.warning("job group could not be closed: %s", e)
         return str(e)
+    _grupo_aberto = None
+    return None
 
 
 def _falhou_ao_fechar(dados, erro, assimilar):
@@ -127,22 +131,25 @@ def register_job_routes(api):
     def begin_job_handler(doc, request):
         corpo = _corpo(request)
         job_id = corpo.get("job_id")
+        antes = _grupos.instantaneo()
         decisao = _grupos.begin(job_id, dry_run=bool(corpo.get("dry_run")))
-        if decisao.action in (OPEN, ROLLBACK_THEN_OPEN):
-            changes.esquecer_perdas()
         if decisao.action == ROLLBACK_THEN_OPEN:
             erro = _fechar(assimilar=False)
             if erro:
                 # O grupo anterior NÃO foi desfeito. Abrir outro por cima
-                # empilharia trabalho sobre um estado que ninguém sabe qual é.
-                _grupos.forget()
+                # empilharia trabalho sobre um estado que ninguém sabe qual é —
+                # e o trabalho anterior volta a existir, com as perdas dele,
+                # para que a segunda tentativa tenha o que fechar.
+                _grupos.restaurar(*antes)
                 dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
                 return routes.make_response(data=dados, status=500)
-            _abrir(doc, job_id)
-        elif decisao.action == OPEN:
+        if decisao.action in (OPEN, ROLLBACK_THEN_OPEN):
             try:
                 _abrir(doc, job_id)
             except Exception as e:
+                # O Revit recusou abrir. O trabalho não pode ficar registrado
+                # como aberto — e o anterior, que já foi desfeito, também não
+                # volta: ele não existe mais no Revit.
                 _grupos.forget()
                 return routes.make_response(
                     data={
@@ -153,6 +160,10 @@ def register_job_routes(api):
                     },
                     status=500,
                 )
+            # As perdas são zeradas SÓ AQUI: antes disto, o trabalho anterior
+            # ainda pode voltar, e apagar a evidência dele deixaria um plano
+            # incompleto se apresentando como completo.
+            changes.esquecer_perdas()
         return routes.make_response(
             data=decisao.to_dict(), status=200 if decisao.ok else 409
         )
@@ -164,6 +175,7 @@ def register_job_routes(api):
         # resposta que deveria carregá-lo.
         ensaio = _grupos.dry_run
         relatorio = _grupos.rehearsal() if ensaio else None
+        antes = _grupos.instantaneo()
         decisao = _grupos.commit(_corpo(request).get("job_id"))
         dados = decisao.to_dict()
         erro = None
@@ -173,6 +185,9 @@ def register_job_routes(api):
             # Ensaio: executou de verdade e desfaz no fim.
             erro = _fechar(assimilar=False)
         if erro:
+            # O trabalho volta a existir: o grupo continua aberto no Revit e
+            # tentar de novo é a saída.
+            _grupos.restaurar(*antes)
             dados = _falhou_ao_fechar(dados, erro, decisao.action == ASSIMILATE)
             return routes.make_response(data=dados, status=500)
         if relatorio is not None and decisao.ok:
@@ -193,11 +208,13 @@ def register_job_routes(api):
 
     @api.route("/abort_job/", methods=["POST"])
     def abort_job_handler(doc, request):
+        antes = _grupos.instantaneo()
         decisao = _grupos.abort(_corpo(request).get("job_id"))
         erro = None
         if decisao.action == ROLLBACK:
             erro = _fechar(assimilar=False)
         if erro:
+            _grupos.restaurar(*antes)
             # Mesma regra do commit: dizer "descartado" quando o Revit recusou
             # desfazer é a única mentira que estas rotas não podem contar.
             dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
