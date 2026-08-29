@@ -127,7 +127,12 @@ def _fechar(assimilar):
         # O grupo FICA. Uma falha pode ser transitória, e apagar a referência
         # transforma "tente de novo" em "não há mais como tentar".
         logger.warning("job group could not be closed: %s", e)
-        return str(e)
+        # NUNCA vazio. `str(RuntimeError())` é "", e os três handlers decidem
+        # por `if erro`: uma exceção sem mensagem passava por sucesso, e a
+        # resposta dizia "nada persistiu" com o grupo ainda aberto no Revit —
+        # o `JobGroups` dando por fechado e a referência viva, os dois estados
+        # separados. Um revisor reproduziu levantando `RuntimeError()` pelado.
+        return str(e) or type(e).__name__ or "o Revit recusou sem dizer por quê"
     _grupo_aberto = None
     return None
 

@@ -455,3 +455,65 @@ def test_o_instantaneo_e_tirado_ANTES_da_decisao(rotas, monkeypatch):
         "a segunda tentativa achou que `b` já estava aberto: a foto foi tirada "
         "depois da decisão, e restaurou o estado já mudado ({})".format(dados)
     )
+
+
+def test_excecao_SEM_MENSAGEM_nao_passa_por_sucesso(rotas):
+    """`str(RuntimeError())` é string vazia, e os handlers decidem por `if erro`.
+
+    Um revisor reproduziu: o `commit` de um ensaio recusado respondia 200,
+    `ok: true`, "nothing persisted" — com `_grupo_aberto` ainda apontando para
+    o grupo. O `JobGroups` dava por fechado e a referência continuava viva: os
+    dois estados separados, e o `begin` seguinte sobrescreveria a única
+    referência ao primeiro.
+
+    Todos os testes anteriores levantavam com mensagem, então nenhum
+    atravessava o valor falso.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+
+    class RecusaCalada(FalsoGrupo):
+        def RollBack(self):
+            raise RuntimeError()  # sem mensagem
+
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a", "dry_run": True}))
+    jr._grupo_aberto = RecusaCalada()
+
+    status, dados = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+
+    assert status == 500, f"exceção sem mensagem passou por sucesso ({status}): {dados}"
+    assert dados["ok"] is False
+    assert dados["revit_error"], "a resposta não diz nada sobre a recusa"
+
+
+def test_ensaio_com_commit_recusado_volta_INTEIRO_para_a_segunda_tentativa(rotas, monkeypatch):
+    """A compensação do `commit` não era coberta — só a da substituição.
+
+    Um revisor mutilou apenas a compensação do `commit` (restaurar o dono e
+    zerar `dry_run`, relatórios e rotas) e os 195 testes ficaram verdes. Na
+    sequência real, a segunda tentativa devolvia **200/assimilate e sem
+    relatório**: o ensaio virava permanente e o plano sumia.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a", "dry_run": True}))
+    jr.record_change(
+        {"created": ["7"], "modified": [], "deleted": [], "measurements": {}},
+        route="/export_ifc/",
+    )
+
+    FalsoGrupo.recusa = True
+    try:
+        status, _ = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+    finally:
+        FalsoGrupo.recusa = False
+    assert status == 500
+
+    status, dados = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+    assert dados["action"] == "rollback", (
+        "o ensaio virou trabalho de verdade na segunda tentativa: seria tornado permanente"
+    )
+    assert dados["changes_report"]["created"] == ["7"], "o plano sumiu na segunda tentativa"
+    assert "not_undone" in dados["changes_report"]

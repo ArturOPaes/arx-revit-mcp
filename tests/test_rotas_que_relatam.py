@@ -131,7 +131,16 @@ def test_pelo_menos_as_instrumentadas_continuam_relatando():
     assert len(relatam) >= 8, f"o número de rotas que relatam caiu para {len(relatam)}: {sorted(relatam)}"
 
 
-# Verbos da API do Revit que MUDAM alguma coisa — modelo ou disco.
+# Verbos da API do Revit que deixam efeito PERSISTENTE no modelo ou no disco.
+#
+# "Persistente" e não "modelo ou disco": um revisor mostrou que a afirmação
+# larga já tinha exceção viva. `/get_view/` chama `doc.ExportImage(...)`, cria
+# uma pasta e apaga o PNG depois — mexe no disco e não deixa nada. Cobrá-la de
+# relatório seria o guarda acusando demais, e manter a frase larga com uma
+# exceção calada seria o guarda mentindo.
+#
+# Efeito temporário com limpeza fica de fora, e a exceção é escrita, não
+# assumida.
 #
 # Esta é a fonte INDEPENDENTE das listas escritas à mão. Um revisor mostrou
 # que o teste anterior provava a lista com a própria lista: o detector marcava
@@ -150,7 +159,19 @@ VERBOS_QUE_MUDAM = (
     ".SaveAs(",
     "ActivateView(",
     "Duplicate(",
+    # Disco. `ExportImage` entrou depois: sem ele, a isenção de `/get_view/`
+    # era código morto — a rota nunca chegava a ser acusada, e a exceção
+    # escrita guardava contra uma acusação que não acontecia. Um detector que
+    # não vê o verbo não precisa de isenção; ele precisa do verbo.
+    "ExportImage(",
+    "makedirs(",
 )
+
+
+# Rotas que tocam o disco e NÃO deixam efeito: medido, não suposto.
+EFEITO_TEMPORARIO = {
+    "/get_view/<view_name>",  # ExportImage num diretório próprio, PNG apagado ao fim
+}
 
 
 def test_nenhuma_rota_com_verbo_de_MUDANCA_fica_fora_do_inventario():
@@ -169,6 +190,8 @@ def test_nenhuma_rota_com_verbo_de_MUDANCA_fica_fora_do_inventario():
             fim = marcas[i + 1].start() if i + 1 < len(marcas) else len(texto)
             corpo = texto[m.end() : fim]
             caminho = m.group(1)
+            if caminho in EFEITO_TEMPORARIO:
+                continue
             if any(v in corpo for v in VERBOS_QUE_MUDAM) and caminho not in escrevem:
                 faltando.append(caminho)
 
@@ -206,3 +229,31 @@ def test_cada_divida_e_de_uma_rota_que_existe(caminho):
     # Dívida sobre rota que não existe mais é ruído que ninguém remove.
     todas = {c for c, _, _ in inventario()}
     assert caminho in todas, f"{caminho} está na lista de dívida e não existe mais no código"
+
+
+@pytest.mark.parametrize("caminho", sorted(EFEITO_TEMPORARIO))
+def test_a_isencao_por_efeito_temporario_e_de_rota_que_existe(caminho):
+    # Isenção sobre rota que sumiu é permissão esquecida — e permissão
+    # esquecida é como uma rota nova entra por um nome parecido.
+    todas = {c for c, _, _ in inventario()}
+    assert caminho in todas, f"{caminho} está isenta e não existe mais no código"
+
+
+def test_a_isencao_apaga_a_limpeza_junto():
+    """A isenção vale enquanto a limpeza existir.
+
+    `/get_view/` só está isenta porque apaga o PNG que criou. Se a limpeza
+    sumir, o efeito passa a ser persistente e a isenção vira uma mentira — sem
+    ninguém mexer no teste.
+    """
+    fonte = ""
+    for arquivo in (RAIZ / "revit_mcp").glob("*.py"):
+        texto = arquivo.read_text(encoding="utf-8")
+        if "/get_view/<view_name>" in texto:
+            fonte = texto
+            break
+    assert fonte, "não achei a rota isenta no código"
+    assert "remove(" in fonte or "unlink(" in fonte or "rmtree(" in fonte, (
+        "a rota isenta por 'apaga o que cria' não apaga mais nada — a isenção "
+        "virou permissão para deixar arquivo no disco do arquiteto"
+    )
