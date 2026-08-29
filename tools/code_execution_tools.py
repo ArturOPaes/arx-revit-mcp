@@ -1,8 +1,30 @@
 # -*- coding: utf-8 -*-
 """Code execution tools for the MCP server."""
 
+import json
+
 from mcp.server.fastmcp import Context
-from .utils import format_response
+
+
+def _registro_da_execucao(response):
+    """O que o cliente MCP recebe de volta de `/execute_code/`.
+
+    `format_response` existe para achatar respostas variadas num texto curto
+    — e para código, isso apaga o próprio ponto: no caminho de sucesso ele
+    devolve só `output` (o que o `print` produziu), descartando
+    `code_executed`. É a única rota cujo argumento é código livre, então é a
+    única em que "o que RODOU" precisa atravessar inteiro, não resumido.
+
+    Resposta em dict (o caso normal, HTTP 200 ou o corpo já decodificado)
+    vira JSON completo — nenhum campo escolhido a dedo, porque um campo novo
+    que a rota vier a acrescentar (um `executed_at`, por exemplo) deve
+    atravessar sem precisar editar aqui de novo. Resposta que já chegou como
+    texto (erro de rede, ou HTTP diferente de 200) passa como está — é o
+    mesmo caminho que `format_response` já usava para isso.
+    """
+    if isinstance(response, dict):
+        return json.dumps(response)
+    return str(response)
 
 
 def register_code_execution_tools(mcp, revit_get, revit_post, revit_image=None):
@@ -86,7 +108,7 @@ def register_code_execution_tools(mcp, revit_get, revit_post, revit_image=None):
                 await ctx.info("Executing code: {}".format(description))
 
             response = await revit_post("/execute_code/", payload, ctx)
-            return format_response(response)
+            return _registro_da_execucao(response)
 
         except (ConnectionError, ValueError, RuntimeError) as e:
             error_msg = "Error during code execution: {}".format(str(e))

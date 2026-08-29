@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 import traceback
+from datetime import datetime
 from StringIO import StringIO
 
 # Standard logger setup
@@ -77,6 +78,12 @@ def register_code_execution_routes(api):
                     ),
                 }
 
+                # O instante é tomado AQUI, na ponte dentro do Revit: o pedido
+                # pode esperar no agente ou no transporte antes de rodar. O
+                # registro precisa dizer quando a execução aconteceu, não
+                # quando alguém pediu.
+                executed_at = datetime.utcnow().isoformat() + "Z"
+
                 # Execute the code
                 exec(code_to_execute, namespace)
 
@@ -100,6 +107,7 @@ def register_code_execution_routes(api):
                             else "Code executed successfully (no output)"
                         ),
                         "code_executed": code_to_execute,
+                        "executed_at": executed_at,
                     }
                 )
 
@@ -162,6 +170,7 @@ def register_code_execution_routes(api):
                     "error_type": error_type,
                     "traceback": error_traceback,
                     "code_attempted": code_to_execute,
+                    "executed_at": executed_at,
                 }
 
                 if partial_output:
