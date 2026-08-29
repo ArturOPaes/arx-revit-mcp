@@ -90,6 +90,53 @@ def test_o_registro_recebe_o_que_a_ferramenta_usa(registradas):
     assert mcp.ferramentas["begin_job"] is not None
 
 
+@pytest.mark.anyio
+async def test_o_relatorio_do_ensaio_chega_ao_agente(registradas):
+    """O que a ferramenta devolve é o plano. Perder o relatório aqui é perder
+    tudo — e era o que acontecia: `format_response` devolve `message` assim que
+    ela existe, e o resto do corpo some. Um `commit_job` de ensaio voltava como
+    "rehearsal undone; nothing persisted", sem os elementos e sem as medições.
+
+    O dublê da primeira versão deste arquivo devolvia `{"ok": true}`, então o
+    teste passava sobre uma resposta que não tinha o que perder. Um revisor
+    mediu no mesmo dia em que a ligação entrou.
+    """
+    import json as _json
+
+    from tools import register_tools
+
+    mcp = MCPFalso()
+
+    async def get(endpoint, ctx=None, **kw):
+        return {}
+
+    async def post(endpoint, data=None, ctx=None, **kw):
+        return {
+            "ok": True,
+            "action": "rollback",
+            "message": "rehearsal of job j1 undone; nothing persisted",
+            "changes_report": {
+                "created": ["7"],
+                "modified": [],
+                "deleted": [],
+                "measurements": {
+                    "ambientes": [{"id": "sala-01", "uso": "dormitorio", "medicoes": {}}]
+                },
+            },
+        }
+
+    async def imagem(endpoint, ctx=None):
+        return ""
+
+    register_tools(mcp, get, post, imagem)
+    saida = await mcp.ferramentas["commit_job"]("j1")
+
+    assert "changes_report" in saida, f"o plano do ensaio não chegou ao agente: {saida}"
+    assert "7" in saida, "o elemento sumiu do plano"
+    assert "sala-01" in saida, "a medição sumiu do plano — é ela que a norma confere"
+    _json.loads(saida)
+
+
 def test_a_ferramenta_avisa_que_o_ensaio_EXECUTA(registradas):
     # O texto que o agente lê é o que decide se ele usa a coisa certa. "Ensaio"
     # que parece inócuo faz alguém exportar um PDF achando que nada aconteceu.

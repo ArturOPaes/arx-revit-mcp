@@ -394,3 +394,26 @@ class TestCriarContemModificar:
         grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
         grupos.record({"created": [], "modified": [], "deleted": ["7"], "measurements": {}})
         assert grupos.rehearsal()["deleted"] == []
+
+
+class TestSaldoZero:
+    """Criado e apagado no mesmo trabalho some dos DOIS lados.
+
+    Tirar só de `deleted` deixava o elemento contado como criado — o plano
+    dizia "1 criado" sobre algo que não existe no fim. O comentário prometia
+    saldo zero e o código entregava metade; um revisor mediu, e o teste
+    anterior só conferia o lado que funcionava.
+    """
+
+    def test_criado_e_apagado_some_dos_dois_lados(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": ["7"], "modified": [], "deleted": [], "measurements": {}})
+        grupos.record({"created": [], "modified": [], "deleted": ["7"], "measurements": {}})
+        r = grupos.rehearsal()
+        assert r["deleted"] == []
+        assert r["created"] == [], "o plano ainda conta como criado algo que não existe no fim"
+
+    def test_apagar_o_que_ja_existia_continua_contando(self, grupos):
+        grupos.begin("job-1", dry_run=True)
+        grupos.record({"created": [], "modified": [], "deleted": ["9"], "measurements": {}})
+        assert grupos.rehearsal()["deleted"] == ["9"]

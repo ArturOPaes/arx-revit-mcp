@@ -163,3 +163,89 @@ def test_plano_sem_perda_sai_completo(rotas):
 
     assert status == 200 and dados["ok"] is True
     assert "plano_incompleto" not in dados
+
+
+def _monta(jr):
+    handlers = {}
+
+    class Api:
+        def route(self, caminho, methods=None):
+            def registra(fn):
+                handlers[caminho] = fn
+                return fn
+
+            return registra
+
+    jr.register_job_routes(Api())
+    return handlers
+
+
+def test_abort_com_o_revit_recusando_nao_diz_descartado(rotas):
+    """Mesma regra do commit, e ela faltava no abort.
+
+    Um revisor mediu: `/abort_job/` respondia 200, "job a discarded", com o
+    grupo ainda aberto no adaptador. Dizer "descartado" quando o Revit recusou
+    desfazer é a única mentira que estas rotas não podem contar — o arquiteto
+    segue achando que o modelo voltou.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+    FalsoGrupo.recusa = True
+    try:
+        status, dados = handlers["/abort_job/"](None, Pedido({"job_id": "a"}))
+    finally:
+        FalsoGrupo.recusa = False
+
+    assert status == 500, f"o abort saiu {status} com o Revit recusando"
+    assert dados["ok"] is False
+    assert "PODE" in dados["message"]
+
+
+def test_begin_por_cima_de_um_grupo_que_nao_desfaz_nao_abre_outro(rotas):
+    """Empilhar trabalho sobre um estado que ninguém sabe qual é.
+
+    O `begin` de um trabalho novo descarta o anterior. Se o Revit recusar esse
+    descarte e a rota abrir o novo mesmo assim, o segundo trabalho nasce em
+    cima do primeiro — e nada, nem no modelo nem na resposta, diz isso.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+    FalsoGrupo.recusa = True
+    try:
+        status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    finally:
+        FalsoGrupo.recusa = False
+
+    assert status == 500, f"abriu o trabalho novo por cima do que não desfez ({status})"
+    assert dados["ok"] is False
+
+
+def test_o_revit_recusando_ABRIR_nao_deixa_trabalho_fantasma(rotas, monkeypatch):
+    """`Start()` que falha deixava o trabalho registrado como aberto.
+
+    A decisão pura é tomada antes do efeito. Sem compensar, o `begin` seguinte
+    respondia "já está aberto" sobre um grupo que nunca começou — e o trabalho
+    inteiro rodaria sem grupo nenhum, achando que tinha um.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+
+    class NaoAbre(FalsoGrupo):
+        def Start(self):
+            raise RuntimeError("start refused")
+
+    monkeypatch.setattr(jr.DB, "TransactionGroup", lambda doc, nome: NaoAbre())
+
+    status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "d"}))
+    assert status == 500 and dados["ok"] is False
+
+    # E o trabalho não ficou registrado: o próximo begin ABRE, não diz "já está
+    # aberto".
+    monkeypatch.setattr(jr.DB, "TransactionGroup", lambda doc, nome: FalsoGrupo())
+    FalsoGrupo.recusa = False
+    status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "d"}))
+    assert dados["action"] == "open", f"trabalho fantasma: {dados}"

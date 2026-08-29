@@ -34,6 +34,7 @@ import logging
 from . import changes
 from .job_group import (
     ASSIMILATE,
+    NOTHING as NADA,
     OPEN,
     ROLLBACK,
     ROLLBACK_THEN_OPEN,
@@ -60,9 +61,17 @@ def _corpo(request):
 
 
 def _abrir(doc, job_id):
+    """Abre o grupo. Se o Revit recusar, o trabalho NÃO fica registrado.
+
+    A decisão pura é tomada antes do efeito, e sem isto uma falha de `Start()`
+    deixava um trabalho fantasma: `open_job` apontando para um grupo que nunca
+    começou, e o `begin` seguinte respondendo "já está aberto". Um revisor
+    reproduziu.
+    """
     global _grupo_aberto
-    _grupo_aberto = DB.TransactionGroup(doc, "PlanArchi job {}".format(job_id))
-    _grupo_aberto.Start()
+    grupo = DB.TransactionGroup(doc, "PlanArchi job {}".format(job_id))
+    grupo.Start()
+    _grupo_aberto = grupo
 
 
 def _fechar(assimilar):
@@ -122,10 +131,28 @@ def register_job_routes(api):
         if decisao.action in (OPEN, ROLLBACK_THEN_OPEN):
             changes.esquecer_perdas()
         if decisao.action == ROLLBACK_THEN_OPEN:
-            _fechar(assimilar=False)
+            erro = _fechar(assimilar=False)
+            if erro:
+                # O grupo anterior NÃO foi desfeito. Abrir outro por cima
+                # empilharia trabalho sobre um estado que ninguém sabe qual é.
+                _grupos.forget()
+                dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
+                return routes.make_response(data=dados, status=500)
             _abrir(doc, job_id)
         elif decisao.action == OPEN:
-            _abrir(doc, job_id)
+            try:
+                _abrir(doc, job_id)
+            except Exception as e:
+                _grupos.forget()
+                return routes.make_response(
+                    data={
+                        "action": NADA,
+                        "ok": False,
+                        "message": "o Revit recusou abrir o grupo deste trabalho ({})".format(e),
+                        "revit_error": str(e),
+                    },
+                    status=500,
+                )
         return routes.make_response(
             data=decisao.to_dict(), status=200 if decisao.ok else 409
         )
@@ -167,8 +194,14 @@ def register_job_routes(api):
     @api.route("/abort_job/", methods=["POST"])
     def abort_job_handler(doc, request):
         decisao = _grupos.abort(_corpo(request).get("job_id"))
+        erro = None
         if decisao.action == ROLLBACK:
-            _fechar(assimilar=False)
+            erro = _fechar(assimilar=False)
+        if erro:
+            # Mesma regra do commit: dizer "descartado" quando o Revit recusou
+            # desfazer é a única mentira que estas rotas não podem contar.
+            dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
+            return routes.make_response(data=dados, status=500)
         return routes.make_response(
             data=decisao.to_dict(), status=200 if decisao.ok else 409
         )

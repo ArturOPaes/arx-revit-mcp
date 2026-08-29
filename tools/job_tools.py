@@ -8,9 +8,25 @@ exposing the three routes — and it is the plainest form of "built and
 unreachable" there is.
 """
 
+import json
+
 from mcp.server.fastmcp import Context
 
-from .utils import format_response
+
+def _resposta_do_trabalho(response):
+    """Devolve TUDO — e nunca só a mensagem.
+
+    `format_response` devolve `response["message"]` assim que ela existe, e
+    todo o resto do corpo some. Para estas três ferramentas isso apagava
+    exatamente a carga: `commit_job` de um ensaio voltava como "rehearsal
+    undone; nothing persisted", sem o `changes_report`, sem os elementos, sem
+    as medições. O plano morria a um passo do agente.
+
+    Um revisor mediu isso no mesmo dia em que a ligação entrou.
+    """
+    if not isinstance(response, dict):
+        return str(response)
+    return json.dumps(response, ensure_ascii=False, indent=2)
 
 
 def register_job_tools(mcp, revit_get, revit_post, revit_image=None):
@@ -44,7 +60,7 @@ def register_job_tools(mcp, revit_get, revit_post, revit_image=None):
             ctx: MCP context for logging
         """
         data = {"job_id": job_id, "dry_run": dry_run}
-        return format_response(await revit_post("/begin_job/", data, ctx))
+        return _resposta_do_trabalho(await revit_post("/begin_job/", data, ctx))
 
     @mcp.tool()
     async def commit_job(job_id: str, ctx: Context = None) -> str:
@@ -61,7 +77,7 @@ def register_job_tools(mcp, revit_get, revit_post, revit_image=None):
             job_id: the same identifier passed to begin_job
             ctx: MCP context for logging
         """
-        return format_response(await revit_post("/commit_job/", {"job_id": job_id}, ctx))
+        return _resposta_do_trabalho(await revit_post("/commit_job/", {"job_id": job_id}, ctx))
 
     @mcp.tool()
     async def abort_job(job_id: str, ctx: Context = None) -> str:
@@ -74,4 +90,4 @@ def register_job_tools(mcp, revit_get, revit_post, revit_image=None):
             job_id: the same identifier passed to begin_job
             ctx: MCP context for logging
         """
-        return format_response(await revit_post("/abort_job/", {"job_id": job_id}, ctx))
+        return _resposta_do_trabalho(await revit_post("/abort_job/", {"job_id": job_id}, ctx))

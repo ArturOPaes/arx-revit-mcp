@@ -249,7 +249,13 @@ def _merge(reports):
     # quem aprova lê dois elementos. Criar contém modificar: quem nasceu
     # naquele trabalho não foi "alterado" nele.
     somado["modified"] = [m for m in somado["modified"] if m not in somado["created"]]
-    somado["deleted"] = [d for d in somado["deleted"] if d not in somado["created"]]
+    # Criado E apagado no mesmo trabalho: o saldo é ZERO, e some dos dois
+    # lados. Tirar só de `deleted` deixava o elemento contado como criado —
+    # o plano dizia "1 criado" sobre algo que não existe no fim. O comentário
+    # prometia saldo zero e o código entregava metade; um revisor mediu.
+    nasceu_e_morreu = [d for d in somado["deleted"] if d in somado["created"]]
+    somado["created"] = [c for c in somado["created"] if c not in nasceu_e_morreu]
+    somado["deleted"] = [d for d in somado["deleted"] if d not in nasceu_e_morreu]
     ambientes = _um_por_ambiente(ambientes)
     if ambientes:
         somado["measurements"]["ambientes"] = ambientes
