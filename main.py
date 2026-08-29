@@ -81,7 +81,17 @@ async def _revit_call(method: str, endpoint: str, data: Dict = None, ctx: Contex
                 timeout=timeout,
             )
 
-        return response.json() if response.status_code == 200 else f"Error: {response.status_code} - {response.text}"
+        # O corpo de erro da rota é DADO de auditoria: `/execute_code/`
+        # devolve código tentado, instante e traceback completo. Transformar
+        # todo HTTP != 200 numa string apagava a estrutura justamente no dia
+        # em que alguém precisa investigar o modelo.
+        try:
+            body = response.json()
+        except ValueError:
+            return f"Error: {response.status_code} - {response.text}"
+        if response.status_code != 200 and isinstance(body, dict):
+            body.setdefault("response_code", response.status_code)
+        return body
     except Exception as e:
         return f"Error: {e}"
 
