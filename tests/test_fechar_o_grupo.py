@@ -377,3 +377,81 @@ def test_um_trabalho_novo_comeca_sem_as_perdas_do_anterior(rotas, monkeypatch):
     status, _ = handlers["/begin_job/"](None, Pedido({"job_id": "b", "dry_run": True}))
     assert status == 200
     assert changes.passos_perdidos() == [], "o trabalho novo herdou a perda do anterior"
+
+
+def test_a_restauracao_devolve_o_ENSAIO_e_o_relatorio_inteiros(rotas, monkeypatch):
+    """A compensação restaurava metade, e nenhum teste via.
+
+    Um revisor removeu de `restaurar` a reposição de `dry_run`, `_reports` e
+    `_routes`, e os 191 testes passaram. Na sequência real, depois da falha de
+    substituição, o `commit` do ensaio respondia `assimilate` — **um ensaio
+    seria tornado permanente e o relatório dele sumiria.**
+
+    Este teste percorre a sequência inteira: ensaio com relatório e com efeito
+    que não se desfaz, substituição recusada, e segunda tentativa.
+    """
+    jr, _ = rotas
+    from revit_mcp import changes
+
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a", "dry_run": True}))
+
+    # O trabalho `a` acumula relatório e um efeito que o rollback não desfaz.
+    jr.record_change(
+        {"created": ["7"], "modified": [], "deleted": [], "measurements": {}},
+        route="/export_ifc/",
+    )
+
+    # E perde um passo pelo caminho.
+    def recusa(*_a, **_k):
+        raise RuntimeError("collector offline")
+
+    monkeypatch.setattr(jr, "record_change", recusa)
+    changes.registrar_no_trabalho({}, "/create_walls/")
+    monkeypatch.undo()
+
+    # A substituição por `b` é recusada pelo Revit.
+    FalsoGrupo.recusa = True
+    try:
+        status, _ = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    finally:
+        FalsoGrupo.recusa = False
+    assert status == 500
+
+    # `a` voltou INTEIRO: ainda é ensaio, ainda tem o relatório, ainda sabe da
+    # perda.
+    status, dados = handlers["/commit_job/"](None, Pedido({"job_id": "a"}))
+    assert dados["action"] == "rollback", (
+        "o ensaio virou trabalho de verdade na volta: seria tornado permanente"
+    )
+    assert status == 409, "o plano incompleto voltou a se apresentar como completo"
+    assert dados["plano_incompleto"] == ["/create_walls/"]
+    assert dados["changes_report"]["created"] == ["7"], "o relatório sumiu na volta"
+    assert "not_undone" in dados["changes_report"], "o aviso do que não se desfaz sumiu"
+
+
+def test_o_instantaneo_e_tirado_ANTES_da_decisao(rotas, monkeypatch):
+    """Fotografar depois da decisão restaura o estado já mudado.
+
+    Um revisor moveu a foto para depois do `begin` e os 191 testes passaram.
+    Na sequência real, a segunda tentativa respondia "job b is already open"
+    enquanto o grupo de `a` continuava lá.
+    """
+    jr, _ = rotas
+    handlers = _monta(jr)
+    FalsoGrupo.recusa = False
+    handlers["/begin_job/"](None, Pedido({"job_id": "a"}))
+
+    FalsoGrupo.recusa = True
+    try:
+        handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    finally:
+        FalsoGrupo.recusa = False
+
+    # O dono tem de ser `a` de novo — e não `b`, que nunca chegou a abrir.
+    status, dados = handlers["/begin_job/"](None, Pedido({"job_id": "b"}))
+    assert dados["action"] == "rollback_then_open", (
+        "a segunda tentativa achou que `b` já estava aberto: a foto foi tirada "
+        "depois da decisão, e restaurou o estado já mudado ({})".format(dados)
+    )

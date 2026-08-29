@@ -131,6 +131,62 @@ def test_pelo_menos_as_instrumentadas_continuam_relatando():
     assert len(relatam) >= 8, f"o número de rotas que relatam caiu para {len(relatam)}: {sorted(relatam)}"
 
 
+# Verbos da API do Revit que MUDAM alguma coisa — modelo ou disco.
+#
+# Esta é a fonte INDEPENDENTE das listas escritas à mão. Um revisor mostrou
+# que o teste anterior provava a lista com a própria lista: o detector marcava
+# como escrita qualquer rota que estivesse no conjunto manual, e o teste
+# conferia que as rotas do conjunto manual estavam marcadas. Tirar uma rota
+# dos dois lugares ao mesmo tempo passava verde — foi o que ele fez com
+# `/load_family/`, que executa `doc.LoadFamily(...)`.
+#
+# Procurar o VERBO no corpo da rota não depende de nenhuma lista.
+VERBOS_QUE_MUDAM = (
+    "Transaction(",
+    "doc.Delete(",
+    "doc.Create",
+    "doc.LoadFamily(",
+    ".Save(",
+    ".SaveAs(",
+    "ActivateView(",
+    "Duplicate(",
+)
+
+
+def test_nenhuma_rota_com_verbo_de_MUDANCA_fica_fora_do_inventario():
+    """A fonte independente: o verbo, não a lista.
+
+    Se uma rota chama `doc.LoadFamily` ou `Transaction(` e não aparece como
+    escrita, a lista manual envelheceu — e é assim que uma rota nova entra sem
+    relatório e sem ninguém ver.
+    """
+    escrevem = {c for c, escreve, _ in inventario() if escreve}
+    faltando = []
+    for arquivo in sorted((RAIZ / "revit_mcp").glob("*.py")):
+        texto = arquivo.read_text(encoding="utf-8")
+        marcas = list(re.finditer(r'@api\.route\("([^"]+)"', texto))
+        for i, m in enumerate(marcas):
+            fim = marcas[i + 1].start() if i + 1 < len(marcas) else len(texto)
+            corpo = texto[m.end() : fim]
+            caminho = m.group(1)
+            if any(v in corpo for v in VERBOS_QUE_MUDAM) and caminho not in escrevem:
+                faltando.append(caminho)
+
+    assert not faltando, (
+        "estas rotas chamam um verbo que muda o modelo ou o disco e não estão "
+        "classificadas como escrita: {}. A lista manual envelheceu."
+    ).format(sorted(set(faltando)))
+
+
+def test_a_fonte_independente_encontra_alguma_coisa():
+    # Um detector que não casa com nada passa sempre e não defende nada.
+    achou = 0
+    for arquivo in sorted((RAIZ / "revit_mcp").glob("*.py")):
+        texto = arquivo.read_text(encoding="utf-8")
+        achou += sum(texto.count(v) for v in VERBOS_QUE_MUDAM)
+    assert achou > 20, f"os verbos de mudança quase não aparecem no código ({achou})"
+
+
 def test_o_inventario_enxerga_escrita_que_nao_abre_transacao():
     """A estreiteza que um revisor mediu.
 

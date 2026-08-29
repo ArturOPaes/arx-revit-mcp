@@ -50,6 +50,33 @@ _grupos = JobGroups()
 _grupo_aberto = None
 
 
+def _instantaneo():
+    """Tudo o que precisa voltar se a chamada ao Revit recusar.
+
+    Um só, e não uma tupla posicional repetida em três handlers — um revisor
+    mostrou que a compensação vivia em três cópias e que isso é o que a torna
+    fácil de restaurar pela metade.
+
+    ## O que NÃO entra aqui, e por quê
+
+    As perdas de `changes` não entram. Elas viveriam num segundo lugar, e a
+    tentação é capturá-las "por segurança" — mas `esquecer_perdas` só roda
+    depois de o grupo novo abrir de verdade, então numa chamada recusada não
+    há perda nenhuma a devolver. Compensação para um caso que não acontece é
+    pior que nenhuma: ela sugere uma cobertura que não existe, e o teste que a
+    exercitaria não pode ser escrito.
+
+    Quem mover `esquecer_perdas` para antes do `Start` faz
+    `test_a_perda_do_trabalho_anterior_sobrevive_a_um_begin_que_falha` ficar
+    vermelho — é ali que essa regra é guardada, e não aqui.
+    """
+    return _grupos.instantaneo()
+
+
+def _restaurar(instantaneo):
+    _grupos.restaurar(*instantaneo)
+
+
 def _corpo(request):
     try:
         dados = request.data
@@ -77,15 +104,14 @@ def _abrir(doc, job_id):
 def _fechar(assimilar):
     """Assimilate or roll back. Devolve o erro do Revit, ou None.
 
-    Esquecer o grupo mesmo quando a chamada falha é deliberado: um grupo em que
-    não conseguimos mais mexer não pode ficar registrado como aberto, ou o
-    próximo `begin` tentaria desfazer algo que não está lá.
+    Quando a chamada ao Revit FALHA, o grupo FICA — e o erro sobe. Duas
+    versões anteriores erravam aqui, cada uma de um jeito: a primeira engolia a
+    exceção e respondia "nada persistiu" com o ensaio possivelmente no modelo;
+    a segunda subia o erro mas esquecia o grupo, e com ele a única referência
+    para tentar de novo. Uma falha transitória virava estado irrecuperável.
 
-    O que NÃO é deliberado, e era defeito: engolir a falha. A primeira versão
-    respondia `ok: true` e "nada persistiu" mesmo quando o `RollBack()` do
-    Revit levantava — ou seja, o ensaio podia ter ficado no modelo e a única
-    resposta afirmava o contrário. Um revisor reproduziu com um adaptador que
-    recusa o rollback. Agora o erro sobe.
+    Esta docstring já disse que esquecer era deliberado. Não é, e a linha ficou
+    contradizendo o código por uma rodada inteira — um revisor apontou.
     """
     global _grupo_aberto
     grupo = _grupo_aberto
@@ -131,7 +157,7 @@ def register_job_routes(api):
     def begin_job_handler(doc, request):
         corpo = _corpo(request)
         job_id = corpo.get("job_id")
-        antes = _grupos.instantaneo()
+        antes = _instantaneo()
         decisao = _grupos.begin(job_id, dry_run=bool(corpo.get("dry_run")))
         if decisao.action == ROLLBACK_THEN_OPEN:
             erro = _fechar(assimilar=False)
@@ -140,7 +166,7 @@ def register_job_routes(api):
                 # empilharia trabalho sobre um estado que ninguém sabe qual é —
                 # e o trabalho anterior volta a existir, com as perdas dele,
                 # para que a segunda tentativa tenha o que fechar.
-                _grupos.restaurar(*antes)
+                _restaurar(antes)
                 dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
                 return routes.make_response(data=dados, status=500)
         if decisao.action in (OPEN, ROLLBACK_THEN_OPEN):
@@ -175,7 +201,7 @@ def register_job_routes(api):
         # resposta que deveria carregá-lo.
         ensaio = _grupos.dry_run
         relatorio = _grupos.rehearsal() if ensaio else None
-        antes = _grupos.instantaneo()
+        antes = _instantaneo()
         decisao = _grupos.commit(_corpo(request).get("job_id"))
         dados = decisao.to_dict()
         erro = None
@@ -187,7 +213,7 @@ def register_job_routes(api):
         if erro:
             # O trabalho volta a existir: o grupo continua aberto no Revit e
             # tentar de novo é a saída.
-            _grupos.restaurar(*antes)
+            _restaurar(antes)
             dados = _falhou_ao_fechar(dados, erro, decisao.action == ASSIMILATE)
             return routes.make_response(data=dados, status=500)
         if relatorio is not None and decisao.ok:
@@ -208,13 +234,13 @@ def register_job_routes(api):
 
     @api.route("/abort_job/", methods=["POST"])
     def abort_job_handler(doc, request):
-        antes = _grupos.instantaneo()
+        antes = _instantaneo()
         decisao = _grupos.abort(_corpo(request).get("job_id"))
         erro = None
         if decisao.action == ROLLBACK:
             erro = _fechar(assimilar=False)
         if erro:
-            _grupos.restaurar(*antes)
+            _restaurar(antes)
             # Mesma regra do commit: dizer "descartado" quando o Revit recusou
             # desfazer é a única mentira que estas rotas não podem contar.
             dados = _falhou_ao_fechar(decisao.to_dict(), erro, False)
